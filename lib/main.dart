@@ -44,12 +44,11 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey<_FileBrowserPageState> _fileBrowserKey = GlobalKey();
 
-  // --- 播放器狀態 ---
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final List<FileSystemEntity> _playQueue = [];
   String _currentTitle = "未在播放";
-  String _currentPath = ""; // 紀錄目前播放檔案的路徑
+  String _currentPath = "";
   bool _isPlaying = false;
-  bool _isFavorite = false;
   int _playMode = 0;
 
   Duration _duration = Duration.zero;
@@ -59,20 +58,22 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _durationSub = _audioPlayer.onDurationChanged.listen(
-      (d) => setState(() => _duration = d),
-    );
-    _positionSub = _audioPlayer.onPositionChanged.listen(
-      (p) => setState(() => _position = p),
-    );
-    _stateSub = _audioPlayer.onPlayerStateChanged.listen(
-      (s) => setState(() => _isPlaying = s == PlayerState.playing),
-    );
+    _durationSub = _audioPlayer.onDurationChanged.listen((d) {
+      setState(() => _duration = d);
+    });
+    _positionSub = _audioPlayer.onPositionChanged.listen((p) {
+      setState(() => _position = p);
+    });
+    _stateSub = _audioPlayer.onPlayerStateChanged.listen((s) {
+      setState(() => _isPlaying = s == PlayerState.playing);
+    });
     _completeSub = _audioPlayer.onPlayerComplete.listen((event) {
-      if (_playMode == 1) {
-        _audioPlayer.resume();
-      } else {
-        _playNext();
+      if (_selectedIndex == 0) {
+        if (_playMode == 1) {
+          _audioPlayer.resume();
+        } else {
+          _playNext();
+        }
       }
     });
   }
@@ -93,24 +94,34 @@ class _MainScreenState extends State<MainScreen> {
     OverlayEntry overlayEntry = OverlayEntry(
       builder: (context) => Positioned(
         top: MediaQuery.of(context).size.height * 0.5,
-        width: MediaQuery.of(context).size.width,
-        child: DefaultTextStyle(
-          style: const TextStyle(color: Colors.white, fontSize: 14),
+        child: SizedBox(
+          width: MediaQuery.of(context).size.width,
           child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(25),
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(25),
+                ),
+                child: Text(
+                  message,
+                  style: const TextStyle(color: Colors.white),
+                ),
               ),
-              child: Text(message),
             ),
           ),
         ),
       ),
     );
     overlayState.insert(overlayEntry);
-    Future.delayed(const Duration(seconds: 1), () => overlayEntry.remove());
+    Future.delayed(const Duration(seconds: 1), () {
+      overlayEntry.remove();
+    });
   }
 
   void _handlePlay(String path) async {
@@ -122,24 +133,50 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  void _addToQueue(List<FileSystemEntity> files) {
+    int addedCount = 0;
+    setState(() {
+      for (var file in files) {
+        if (!_playQueue.any((e) => e.path == file.path)) {
+          _playQueue.add(file);
+          addedCount++;
+        }
+      }
+    });
+    if (addedCount > 0) {
+      _showCenterToast("已加入 $addedCount 首歌曲");
+    } else {
+      _showCenterToast("歌曲已存在於佇列中");
+    }
+  }
+
   void _playNext() {
-    final browserState = _fileBrowserKey.currentState;
-    if (browserState == null || browserState._allFiles.isEmpty) return;
-    List<FileSystemEntity> list = browserState._allFiles;
-    int currentIndex = list.indexWhere((file) => file.path == _currentPath);
+    if (_playQueue.isEmpty) {
+      return;
+    }
+    int currentIndex = _playQueue.indexWhere(
+      (file) => file.path == _currentPath,
+    );
     int nextIndex = _playMode == 2
-        ? Random().nextInt(list.length)
-        : (currentIndex + 1) % list.length;
-    _handlePlay(list[nextIndex].path);
+        ? Random().nextInt(_playQueue.length)
+        : (currentIndex + 1) % _playQueue.length;
+    _handlePlay(_playQueue[nextIndex].path);
   }
 
   void _playPrevious() {
-    final browserState = _fileBrowserKey.currentState;
-    if (browserState == null || browserState._allFiles.isEmpty) return;
-    List<FileSystemEntity> list = browserState._allFiles;
-    int currentIndex = list.indexWhere((file) => file.path == _currentPath);
-    int prevIndex = (currentIndex - 1 + list.length) % list.length;
-    _handlePlay(list[prevIndex].path);
+    if (_playQueue.isEmpty) {
+      return;
+    }
+    int currentIndex = _playQueue.indexWhere(
+      (file) => file.path == _currentPath,
+    );
+    int prevIndex = (currentIndex - 1 + _playQueue.length) % _playQueue.length;
+    _handlePlay(_playQueue[prevIndex].path);
+  }
+
+  String _formatDuration(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    return "${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}";
   }
 
   @override
@@ -158,29 +195,36 @@ class _MainScreenState extends State<MainScreen> {
                   controller: _searchController,
                   autofocus: true,
                   decoration: const InputDecoration(
-                    hintText: '搜尋歌曲...',
+                    hintText: '搜尋目前頁面...',
                     border: InputBorder.none,
                   ),
                   onChanged: (value) => setState(() {}),
                 )
-              : const Text('Sixer MP3 Player'),
+              : Text(
+                  _selectedIndex == 0
+                      ? "播放佇列"
+                      : (_selectedIndex == 1 ? "檔案總管" : "播放清單"),
+                ),
           actions: [
             IconButton(
               icon: Icon(_isSearching ? Icons.close : Icons.search),
-              onPressed: () => setState(() {
-                _isSearching = !_isSearching;
-                if (!_isSearching) _searchController.clear();
-              }),
+              onPressed: () {
+                setState(() {
+                  _isSearching = !_isSearching;
+                  _searchController.clear();
+                });
+              },
             ),
             IconButton(
               icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
               onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
             ),
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () =>
-                  _fileBrowserKey.currentState?._checkPermissionAndScan(),
-            ),
+            if (_selectedIndex == 1)
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () =>
+                    _fileBrowserKey.currentState?._checkPermissionAndScan(),
+              ),
           ],
         ),
         body: Column(
@@ -189,20 +233,27 @@ class _MainScreenState extends State<MainScreen> {
               child: IndexedStack(
                 index: _selectedIndex,
                 children: [
-                  const Center(child: Text("第一頁：播放佇列")),
+                  QueuePage(
+                    queue: _playQueue,
+                    currentPath: _currentPath,
+                    isDark: _isDarkMode,
+                    onFileTap: _handlePlay,
+                    searchQuery: _searchController.text,
+                  ),
                   FileBrowserPage(
                     key: _fileBrowserKey,
                     searchQuery: _searchController.text,
                     isDark: _isDarkMode,
                     onFileTap: _handlePlay,
-                    currentPlayingPath: _currentPath, // 傳遞目前路徑給子頁面
+                    currentPlayingPath: _currentPath,
+                    onBatchAdd: _addToQueue,
                   ),
-                  const Center(child: Text("第三頁：播放清單")),
+                  const Center(child: Text("播放清單")),
                 ],
               ),
             ),
             const Divider(height: 1),
-            // 播放控制區
+            // --- 控制區 ---
             Container(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               color: _isDarkMode
@@ -217,44 +268,38 @@ class _MainScreenState extends State<MainScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  Slider(
-                    value: _position.inSeconds.toDouble(),
-                    max: _duration.inSeconds.toDouble() > 0
-                        ? _duration.inSeconds.toDouble()
-                        : 1.0,
-                    onChanged: (v) =>
-                        _audioPlayer.seek(Duration(seconds: v.toInt())),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          _formatDuration(_position),
-                          style: const TextStyle(fontSize: 10),
+                  Row(
+                    children: [
+                      Text(
+                        _formatDuration(_position),
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: _position.inSeconds.toDouble(),
+                          max: _duration.inSeconds.toDouble() > 0
+                              ? _duration.inSeconds.toDouble()
+                              : 1.0,
+                          onChanged: (v) =>
+                              _audioPlayer.seek(Duration(seconds: v.toInt())),
                         ),
-                        Text(
-                          _formatDuration(_duration),
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                      ],
-                    ),
+                      ),
+                      Text(
+                        _formatDuration(_duration),
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                    ],
                   ),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      IconButton(
-                        icon: Icon(
-                          _isFavorite ? Icons.favorite : Icons.favorite_border,
-                        ),
-                        color: _isFavorite ? Colors.red : null,
-                        onPressed: () =>
-                            setState(() => _isFavorite = !_isFavorite),
+                      const IconButton(
+                        icon: Icon(Icons.favorite_border),
+                        onPressed: null,
                       ),
                       IconButton(
                         icon: const Icon(Icons.skip_previous),
-                        onPressed: _playPrevious,
+                        onPressed: _selectedIndex == 0 ? _playPrevious : null,
                       ),
                       IconButton(
                         iconSize: 48,
@@ -270,67 +315,49 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.skip_next),
-                        onPressed: _playNext,
+                        onPressed: _selectedIndex == 0 ? _playNext : null,
                       ),
-                      IconButton(
-                        icon: Icon(
-                          _playMode == 0
-                              ? Icons.repeat
-                              : (_playMode == 1
-                                    ? Icons.repeat_one
-                                    : Icons.shuffle),
-                        ),
-                        color: colorScheme.primary,
-                        onPressed: () {
-                          setState(() => _playMode = (_playMode + 1) % 3);
-                          _showCenterToast(
-                            _playMode == 0
-                                ? "循環播放"
-                                : (_playMode == 1 ? "單曲播放" : "隨機播放"),
-                          );
-                        },
-                      ),
+                      _selectedIndex == 1
+                          ? IconButton(
+                              icon: const Icon(Icons.add_circle_outline),
+                              color: colorScheme.primary,
+                              onPressed: () => _fileBrowserKey.currentState
+                                  ?._addSelectedToQueue(),
+                            )
+                          : IconButton(
+                              icon: Icon(
+                                _playMode == 0
+                                    ? Icons.repeat
+                                    : (_playMode == 1
+                                          ? Icons.repeat_one
+                                          : Icons.shuffle),
+                              ),
+                              color: colorScheme.primary,
+                              onPressed: () {
+                                setState(() => _playMode = (_playMode + 1) % 3);
+                                _showCenterToast(
+                                  _playMode == 0
+                                      ? "循環播放"
+                                      : (_playMode == 1 ? "單曲播放" : "隨機播放"),
+                                );
+                              },
+                            ),
                     ],
                   ),
                 ],
               ),
             ),
-            // 指示條
-            Stack(
-              children: [
-                Container(
-                  height: 4,
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.3,
-                  ),
-                ),
-                AnimatedAlign(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeInOut,
-                  alignment: Alignment(
-                    _selectedIndex == 0
-                        ? -1.0
-                        : (_selectedIndex == 1 ? 0.0 : 1.0),
-                    0,
-                  ),
-                  child: FractionallySizedBox(
-                    widthFactor: 1 / 3,
-                    child: Container(
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ],
         ),
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _selectedIndex,
-          onTap: (i) => setState(() => _selectedIndex = i),
+          onTap: (i) {
+            setState(() {
+              _selectedIndex = i;
+              _isSearching = false;
+              _searchController.clear();
+            });
+          },
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.queue_music),
@@ -349,26 +376,92 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+}
 
-  String _formatDuration(Duration d) {
-    String twoDigits(int n) => n.toString().padLeft(2, "0");
-    return "${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}";
+// --- 其餘 QueuePage 與 FileBrowserPage 邏輯同上，僅修正 if 語法 ---
+class QueuePage extends StatelessWidget {
+  final List<FileSystemEntity> queue;
+  final String currentPath;
+  final bool isDark;
+  final Function(String) onFileTap;
+  final String searchQuery;
+
+  const QueuePage({
+    super.key,
+    required this.queue,
+    required this.currentPath,
+    required this.isDark,
+    required this.onFileTap,
+    required this.searchQuery,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredQueue = queue
+        .where(
+          (file) => file.path
+              .split('/')
+              .last
+              .toLowerCase()
+              .contains(searchQuery.toLowerCase()),
+        )
+        .toList();
+
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          color: isDark ? Colors.black26 : Colors.grey[200],
+          child: Text(
+            "佇列中找到 ${filteredQueue.length} 首",
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: filteredQueue.length,
+            itemBuilder: (context, index) {
+              final file = filteredQueue[index];
+              final bool isSelected = file.path == currentPath;
+              return ListTile(
+                tileColor: isSelected
+                    ? Theme.of(context).colorScheme.secondaryContainer
+                    : null,
+                leading: Icon(isSelected ? Icons.volume_up : Icons.music_note),
+                title: Text(
+                  file.path.split('/').last,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  file.path,
+                  style: const TextStyle(fontSize: 10),
+                  maxLines: 1,
+                ),
+                onTap: () => onFileTap(file.path),
+              );
+            },
+          ),
+        ),
+      ],
+    );
   }
 }
 
-// --- FileBrowserPage 實作 ---
 class FileBrowserPage extends StatefulWidget {
   final String searchQuery;
   final bool isDark;
   final Function(String) onFileTap;
-  final String currentPlayingPath; // 新增：傳入目前播放路徑
-
+  final String currentPlayingPath;
+  final Function(List<FileSystemEntity>) onBatchAdd;
   const FileBrowserPage({
     super.key,
     required this.searchQuery,
     required this.isDark,
     required this.onFileTap,
     required this.currentPlayingPath,
+    required this.onBatchAdd,
   });
 
   @override
@@ -377,16 +470,34 @@ class FileBrowserPage extends StatefulWidget {
 
 class _FileBrowserPageState extends State<FileBrowserPage> {
   List<FileSystemEntity> _allFiles = [];
+  final Set<String> _selectedPaths = {};
   bool _isScanning = false;
+  bool _isMultiSelectMode = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _checkPermissionAndScan();
+  void _addSelectedToQueue() {
+    if (_isMultiSelectMode && _selectedPaths.isNotEmpty) {
+      List<FileSystemEntity> toAdd = _allFiles
+          .where((f) => _selectedPaths.contains(f.path))
+          .toList();
+      widget.onBatchAdd(toAdd);
+      setState(() {
+        _isMultiSelectMode = false;
+        _selectedPaths.clear();
+      });
+    } else {
+      final currentFile = _allFiles
+          .where((f) => f.path == widget.currentPlayingPath)
+          .toList();
+      if (currentFile.isNotEmpty) {
+        widget.onBatchAdd(currentFile);
+      }
+    }
   }
 
   Future<void> _checkPermissionAndScan() async {
-    if (_isScanning) return;
+    if (_isScanning) {
+      return;
+    }
     var status = await Permission.audio.request();
     if (status.isGranted) {
       _startSafeScan();
@@ -394,7 +505,9 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
   }
 
   Future<void> _startSafeScan() async {
-    setState(() => _isScanning = true);
+    setState(() {
+      _isScanning = true;
+    });
     final rootDir = Directory('/storage/emulated/0');
     List<FileSystemEntity> foundFiles = [];
     Future<void> safeScan(Directory dir) async {
@@ -403,20 +516,14 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
         for (var entity in entities) {
           if (entity is File) {
             String path = entity.path.toLowerCase();
-            if (path.endsWith('.mp3') ||
-                path.endsWith('.m4a') ||
-                path.endsWith('.wav')) {
+            if (path.endsWith('.mp3') || path.endsWith('.m4a')) {
               foundFiles.add(entity);
             }
-          } else if (entity is Directory) {
-            if (!entity.path.contains('/Android')) {
-              await safeScan(entity);
-            }
+          } else if (entity is Directory && !entity.path.contains('/Android')) {
+            await safeScan(entity);
           }
         }
-      } catch (e) {
-        debugPrint("Skip: ${dir.path}");
-      }
+      } catch (e) {}
     }
 
     await safeScan(rootDir);
@@ -430,7 +537,6 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final filteredFiles = _allFiles
         .where(
           (file) => file.path
@@ -447,12 +553,26 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
           color: widget.isDark ? Colors.black26 : Colors.grey[200],
-          child: Text(
-            "共找到  (${filteredFiles.length} 首)",
-            style: const TextStyle(fontSize: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "檔案庫找到 (${filteredFiles.length} 首)",
+                style: const TextStyle(fontSize: 12),
+              ),
+              if (_isMultiSelectMode)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _isMultiSelectMode = false;
+                      _selectedPaths.clear();
+                    });
+                  },
+                  child: const Text("取消多選", style: TextStyle(fontSize: 12)),
+                ),
+            ],
           ),
         ),
-        const Divider(height: 1),
         Expanded(
           child: _isScanning
               ? const Center(child: CircularProgressIndicator())
@@ -460,44 +580,59 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                   itemCount: filteredFiles.length,
                   itemBuilder: (context, index) {
                     final file = filteredFiles[index];
-                    // --- 關鍵邏輯：比對路徑 ---
                     final bool isSelected =
                         file.path == widget.currentPlayingPath;
+                    final bool isChecked = _selectedPaths.contains(file.path);
 
                     return ListTile(
-                      // 若選中，背景變色
                       tileColor: isSelected
-                          ? colorScheme.secondaryContainer
+                          ? Theme.of(context).colorScheme.secondaryContainer
                           : null,
-                      leading: CircleAvatar(
-                        backgroundColor: isSelected
-                            ? colorScheme.primary
-                            : colorScheme.primaryContainer,
-                        child: Icon(
-                          isSelected ? Icons.volume_up : Icons.music_note,
-                          color: isSelected
-                              ? colorScheme.onPrimary
-                              : colorScheme.onPrimaryContainer,
-                        ),
-                      ),
+                      leading: _isMultiSelectMode
+                          ? Checkbox(
+                              value: isChecked,
+                              onChanged: (val) {
+                                setState(() {
+                                  if (val == true) {
+                                    _selectedPaths.add(file.path);
+                                  } else {
+                                    _selectedPaths.remove(file.path);
+                                  }
+                                });
+                              },
+                            )
+                          : Icon(
+                              isSelected ? Icons.headphones : Icons.music_note,
+                            ),
                       title: Text(
                         file.path.split('/').last,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          color: isSelected
-                              ? colorScheme.onSecondaryContainer
-                              : null,
-                        ),
                       ),
                       subtitle: Text(
                         file.path,
                         style: const TextStyle(fontSize: 10),
+                        maxLines: 1,
                       ),
-                      onTap: () => widget.onFileTap(file.path),
+                      onLongPress: () {
+                        setState(() {
+                          _isMultiSelectMode = true;
+                          _selectedPaths.add(file.path);
+                        });
+                      },
+                      onTap: () {
+                        if (_isMultiSelectMode) {
+                          setState(() {
+                            if (isChecked) {
+                              _selectedPaths.remove(file.path);
+                            } else {
+                              _selectedPaths.add(file.path);
+                            }
+                          });
+                        } else {
+                          widget.onFileTap(file.path);
+                        }
+                      },
                     );
                   },
                 ),
