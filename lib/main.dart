@@ -195,7 +195,13 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _selectedIndex);
-    _loadData();
+    _loadData().then((_) {
+      // 確保資料載入後，自動執行掃描
+      // 使用 WidgetsBinding 確保在第一幀渲染完成後執行，避免與 UI 構建衝突
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _fileBrowserKey.currentState?._checkPermissionAndScan();
+      });
+    });
     _initAudioListeners();
   }
 
@@ -1161,10 +1167,10 @@ class _FileBrowserPageState extends State<FileBrowserPage>
         if (_isScanning) const LinearProgressIndicator(),
         Expanded(
           child: _allSongs.isEmpty && !_isScanning
-              ? Center(
-                  child: ElevatedButton(
-                    onPressed: _checkPermissionAndScan,
-                    child: const Text("掃描檔案"),
+              ? const Center(
+                  child: Text(
+                    "找不到音樂檔案(.mp3)",
+                    style: TextStyle(color: Colors.grey),
                   ),
                 )
               : ListView.builder(
