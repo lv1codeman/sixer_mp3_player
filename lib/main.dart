@@ -111,30 +111,38 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
   Future<void> _startScan() async {
     setState(() => _isScanning = true);
 
-    // Android 的外部儲存根目錄
-    final directory = Directory('/storage/emulated/0');
+    final rootDir = Directory('/storage/emulated/0');
     List<FileSystemEntity> foundFiles = [];
 
-    try {
-      if (await directory.exists()) {
-        // 取得所有檔案 (遞迴掃描)
-        final List<FileSystemEntity> allEntities = directory.listSync(
-          recursive: true,
-          followLinks: false,
-        );
+    // 我們建立一個內部函數來進行安全遞迴
+    Future<void> safeScan(Directory dir) async {
+      try {
+        // 取得當前目錄下的所有項目（不直接使用 recursive: true）
+        final entities = dir.listSync(recursive: false);
 
-        for (var entity in allEntities) {
-          if (entity is File &&
-              (entity.path.endsWith('.mp3') ||
-                  entity.path.endsWith('.m4a') ||
-                  entity.path.endsWith('.wav'))) {
-            foundFiles.add(entity);
+        for (var entity in entities) {
+          if (entity is File) {
+            String path = entity.path.toLowerCase();
+            if (path.endsWith('.mp3') ||
+                path.endsWith('.m4a') ||
+                path.endsWith('.wav')) {
+              foundFiles.add(entity);
+            }
+          } else if (entity is Directory) {
+            // 跳過 Android 資料夾以避免權限錯誤
+            if (entity.path.endsWith('/Android')) continue;
+
+            // 遞迴掃描子資料夾
+            await safeScan(entity);
           }
         }
+      } catch (e) {
+        // 遇到權限拒絕的資料夾就跳過，不中斷程式
+        debugPrint("跳過無法存取的資料夾: ${dir.path}");
       }
-    } catch (e) {
-      debugPrint("掃描時發生錯誤: $e");
     }
+
+    await safeScan(rootDir);
 
     if (mounted) {
       setState(() {
