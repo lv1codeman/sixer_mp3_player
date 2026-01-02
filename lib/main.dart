@@ -888,10 +888,14 @@ class _MainScreenState extends State<MainScreen> {
                           child: Row(
                             children: [
                               // 左側：當前播放時間
-                              Text(
-                                _formatDuration(_position),
-                                style: const TextStyle(fontSize: 16),
+                              SizedBox(
+                                width: 42,
+                                child: Text(
+                                  _formatDuration(_position),
+                                  style: const TextStyle(fontSize: 14),
+                                ),
                               ),
+
                               // 中間：進度條，使用 Expanded 填滿空間
                               Expanded(
                                 child: Slider(
@@ -931,9 +935,12 @@ class _MainScreenState extends State<MainScreen> {
                                 ),
                               ),
                               // 右側：總時長
-                              Text(
-                                _formatDuration(_duration),
-                                style: const TextStyle(fontSize: 16),
+                              SizedBox(
+                                width: 42,
+                                child: Text(
+                                  _formatDuration(_duration),
+                                  style: const TextStyle(fontSize: 14),
+                                ),
                               ),
                             ],
                           ),
