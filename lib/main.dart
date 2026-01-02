@@ -245,6 +245,112 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  void _showSavePlaylistDialog() {
+    final TextEditingController nameController = TextEditingController();
+    final selectedPaths =
+        _fileBrowserKey.currentState?._selected.toList() ?? [];
+    if (selectedPaths.isEmpty) return;
+
+    String? selectedExistingName;
+    bool isDropdownActive = false; // 追蹤是否選擇了下拉選單
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            // 邏輯：如果下拉選單有選值，禁用輸入框；如果輸入框有字，禁用下拉選單
+            bool isTextEnabled = !isDropdownActive;
+            bool isDropdownEnabled = nameController.text.trim().isEmpty;
+
+            return AlertDialog(
+              title: const Text("另存播放清單"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 1. 輸入框
+                  TextField(
+                    controller: nameController,
+                    enabled: isTextEnabled,
+                    decoration: InputDecoration(
+                      labelText: "新建清單名稱",
+                      hintText: "請輸入名稱...",
+                      // 當輸入框有文字時，清除下拉選單的選取
+                      suffixIcon: nameController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                setDialogState(() => nameController.clear());
+                              },
+                            )
+                          : null,
+                    ),
+                    onChanged: (v) {
+                      // 即時更新 UI 禁用狀態
+                      setDialogState(() {});
+                    },
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8.0),
+                    child: Text(
+                      "— 或 —",
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
+                  // 2. 下拉選單
+                  DropdownButtonFormField<String>(
+                    decoration: const InputDecoration(labelText: "加入現有清單"),
+                    initialValue: selectedExistingName,
+                    hint: const Text("選擇已有清單"),
+                    isExpanded: true,
+                    // 如果輸入框有字，則將 onChanged 設為 null (禁用)
+                    onChanged: isDropdownEnabled
+                        ? (val) {
+                            setDialogState(() {
+                              selectedExistingName = val;
+                              isDropdownActive = (val != null);
+                            });
+                          }
+                        : null,
+                    items: _playlists.keys.map((String name) {
+                      return DropdownMenuItem<String>(
+                        value: name,
+                        child: Text(name),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text("取消"),
+                ),
+                TextButton(
+                  onPressed: () {
+                    String finalName = isDropdownActive
+                        ? (selectedExistingName ?? "")
+                        : nameController.text.trim();
+
+                    if (finalName.isNotEmpty) {
+                      setState(() {
+                        _playlists[finalName] = selectedPaths;
+                      });
+                      _saveData();
+                      _fileBrowserKey.currentState?._cancelSelection();
+                      Navigator.pop(ctx);
+                    }
+                  },
+                  child: const Text("儲存"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _toggleFav(String path) {
     if (path.isEmpty) {
       return;
@@ -290,18 +396,43 @@ class _MainScreenState extends State<MainScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("SixerMP3"),
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true, // 自動彈起鍵盤
+                style: Theme.of(context).textTheme.titleLarge,
+                decoration: const InputDecoration(
+                  hintText: "搜尋音樂...",
+                  border: InputBorder.none, // 移除輸入框底線，使其融入 AppBar
+                  hintStyle: TextStyle(color: Colors.grey),
+                ),
+                onChanged: (v) {
+                  setState(() {}); // 即時更新列表過濾
+                },
+              )
+            : const Text("SixerMP3"),
         actions: [
-          IconButton(
-            icon: Icon(_isSearching ? Icons.close : Icons.search),
-            onPressed: () {
-              setState(() {
-                _isSearching = !_isSearching;
-                _searchController.clear();
-              });
-            },
-          ),
-          if (isBrowser) ...{
+          // 2. 根據是否搜尋中，切換按鈕圖示與功能
+          _isSearching
+              ? IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _isSearching = false;
+                      _searchController.clear(); // 清除搜尋內容
+                    });
+                  },
+                )
+              : IconButton(
+                  icon: Icon(_isSearching ? Icons.close : Icons.search),
+                  onPressed: () {
+                    setState(() {
+                      _isSearching = !_isSearching;
+                      _searchController.clear();
+                    });
+                  },
+                ),
+          if (!_isSearching && isBrowser) ...{
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: () {
@@ -313,19 +444,19 @@ class _MainScreenState extends State<MainScreen> {
       ),
       body: Column(
         children: [
-          if (_isSearching) ...{
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _searchController,
-                autofocus: true,
-                decoration: const InputDecoration(hintText: "搜尋音樂..."),
-                onChanged: (v) {
-                  setState(() {});
-                },
-              ),
-            ),
-          },
+          // if (_isSearching) ...{
+          //   Padding(
+          //     padding: const EdgeInsets.symmetric(horizontal: 16),
+          //     child: TextField(
+          //       controller: _searchController,
+          //       autofocus: true,
+          //       decoration: const InputDecoration(hintText: "搜尋音樂..."),
+          //       onChanged: (v) {
+          //         setState(() {});
+          //       },
+          //     ),
+          //   ),
+          // },
           Expanded(
             child: IndexedStack(
               index: _selectedIndex,
@@ -366,6 +497,7 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 PlaylistPage(
                   playlists: _playlists,
+                  query: _searchController.text,
                   onPlaylistTap: _addPlaylistToQueue,
                   onDeletePlaylist: _deletePlaylist,
                 ),
@@ -376,41 +508,74 @@ class _MainScreenState extends State<MainScreen> {
           if (!isPlaylistPage) ...{
             _isMultiSelectMode
                 ? Container(
-                    padding: const EdgeInsets.all(12),
+                    // 多選操作區
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     color: colorScheme.primaryContainer,
-                    child: Row(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.check_circle),
-                        const SizedBox(width: 8),
-                        Text(
-                          "已選 $_selectedCount 首",
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        // 第一列：顯示資訊
+                        Row(
+                          children: [
+                            const Icon(Icons.check_circle),
+                            const SizedBox(width: 8),
+                            Text(
+                              "已選 $_selectedCount 首",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              "($_selectedTotalTime)",
+                              style: TextStyle(
+                                color: colorScheme.primary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          "($_selectedTotalTime)",
-                          style: TextStyle(
-                            color: colorScheme.primary,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const Spacer(),
-                        ElevatedButton(
-                          onPressed: () {
-                            _fileBrowserKey.currentState?._performAdd();
-                          },
-                          child: const Text("加入"),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () {
-                            _fileBrowserKey.currentState?._cancelSelection();
-                          },
+                        const SizedBox(height: 8),
+                        // 第二列：操作按鈕
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            // 1. 加入佇列
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                _fileBrowserKey.currentState?._performAdd();
+                              },
+                              icon: const Icon(Icons.queue_music),
+                              label: const Text("加入佇列"),
+                            ),
+                            // 2. 另存播放清單
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                // 這裡調用另存清單的邏輯（下方補充）
+                                _showSavePlaylistDialog();
+                              },
+                              icon: const Icon(Icons.playlist_add),
+                              label: const Text("另存清單"),
+                            ),
+                            // 3. 取消按鈕
+                            TextButton.icon(
+                              onPressed: () {
+                                _fileBrowserKey.currentState
+                                    ?._cancelSelection();
+                              },
+                              icon: const Icon(Icons.close),
+                              label: const Text("取消"),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   )
                 : Container(
+                    // 單點：播放音樂
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
                     color: colorScheme.surfaceContainerHighest.withValues(
                       alpha: 0.3,
@@ -424,8 +589,7 @@ class _MainScreenState extends State<MainScreen> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        // 找到原本的 Slider 並替換為以下程式碼
-                        // 將 Slider 區塊改為以下 Row 結構
+                        // 播放進度條
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 8.0),
                           child: Row(
@@ -871,41 +1035,66 @@ class FavoritePage extends StatelessWidget {
 // --- 4. 清單頁面 ---
 class PlaylistPage extends StatelessWidget {
   final Map<String, List<String>> playlists;
+  final String query;
   final Function(String) onPlaylistTap;
   final Function(String) onDeletePlaylist;
 
   const PlaylistPage({
     super.key,
     required this.playlists,
+    required this.query,
     required this.onPlaylistTap,
     required this.onDeletePlaylist,
   });
 
   @override
   Widget build(BuildContext context) {
-    final names = playlists.keys.toList();
+    // 3. 根據 query 過濾清單名稱
+    final names = playlists.keys.where((name) {
+      return name.toLowerCase().contains(query.toLowerCase());
+    }).toList();
 
-    return ListView.builder(
-      itemCount: names.length,
-      itemBuilder: (ctx, idx) {
-        final name = names[idx];
-        return ListTile(
-          leading: const Icon(Icons.playlist_play),
-          title: Text(name),
-          subtitle: Text("共 ${playlists[name]!.length} 首歌曲"),
-          onTap: () {
-            // 點擊清單：將清單歌曲加入佇列並跳轉頁面
-            onPlaylistTap(name);
-          },
-          trailing: IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () {
-              // 這裡可以選擇直接刪除，或彈出對話框確認
-              onDeletePlaylist(name);
+    return Column(
+      children: [
+        // 加入一個簡單的數量統計（與其他頁面風格一致）
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          color: Colors.black12,
+          child: (query == '')
+              ? Text(
+                  "現有清單：${names.length} 個",
+                  style: const TextStyle(fontSize: 12),
+                )
+              : Text(
+                  "符合條件的清單：${names.length} 個",
+                  style: const TextStyle(fontSize: 12),
+                ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: names.length,
+            itemBuilder: (ctx, idx) {
+              final name = names[idx];
+              return ListTile(
+                leading: const Icon(Icons.playlist_play),
+                // 4. 使用之前定義的 HighlightedText 讓搜尋結果更直觀
+                title: HighlightedText(text: name, query: query),
+                subtitle: Text("共 ${playlists[name]!.length} 首歌曲"),
+                onTap: () {
+                  onPlaylistTap(name);
+                },
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () {
+                    onDeletePlaylist(name);
+                  },
+                ),
+              );
             },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 }
