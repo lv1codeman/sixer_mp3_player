@@ -12,7 +12,7 @@ void main() {
   runApp(const SixerMP3Player());
 }
 
-// --- 歌曲資訊模型 ---
+// --- 歌曲資料模型 ---
 class Song {
   final String path;
   final Duration duration;
@@ -47,7 +47,7 @@ class SixerMP3Player extends StatelessWidget {
   }
 }
 
-// --- 關鍵字高亮顯示 ---
+// --- 搜尋高亮顯示組件 ---
 class HighlightedText extends StatelessWidget {
   final String text;
   final String query;
@@ -127,7 +127,7 @@ class _MainScreenState extends State<MainScreen> {
   String _currentPath = "";
   String _currentTitle = "未在播放";
   bool _isPlaying = false;
-  int _playMode = 0; // 0: 列表循環, 1: 單曲, 2: 隨機
+  int _playMode = 0; // 0: 列表, 1: 單曲, 2: 隨機
 
   final Set<String> _favorites = {};
   final Map<String, List<String>> _playlists = {};
@@ -210,11 +210,39 @@ class _MainScreenState extends State<MainScreen> {
 
   void _handlePlay(String path) async {
     await _audioPlayer.stop();
-    await _audioPlayer.play(DeviceFileSource(path));
+    try {
+      await _audioPlayer.play(DeviceFileSource(path));
+      setState(() {
+        _currentPath = path;
+        _currentTitle = path.split('/').last;
+      });
+    } catch (e) {
+      debugPrint("播放失敗: $e");
+    }
+  }
+
+  void _deletePlaylist(String name) {
     setState(() {
-      _currentPath = path;
-      _currentTitle = path.split('/').last;
+      _playlists.remove(name);
     });
+    _saveData(); // 確保刪除後同步到本機儲存
+  }
+
+  void _addPlaylistToQueue(String playlistName) {
+    final paths = _playlists[playlistName];
+    if (paths != null) {
+      setState(() {
+        for (var path in paths) {
+          bool alreadyIn = _playQueue.any((s) {
+            return s.path == path;
+          });
+          if (!alreadyIn) {
+            _playQueue.add(Song(path: path, duration: Duration.zero));
+          }
+        }
+        _selectedIndex = 0; // 跳轉到佇列頁面
+      });
+    }
   }
 
   void _toggleFav(String path) {
@@ -313,6 +341,9 @@ class _MainScreenState extends State<MainScreen> {
                   key: _fileBrowserKey,
                   query: _searchController.text,
                   format: _formatDuration,
+                  favorites: _favorites,
+                  onPlay: _handlePlay,
+                  onToggleFav: _toggleFav,
                   onBatchAdd: (songs) {
                     setState(() {
                       _playQueue.addAll(songs);
@@ -333,7 +364,11 @@ class _MainScreenState extends State<MainScreen> {
                   onPlay: _handlePlay,
                   onToggle: _toggleFav,
                 ),
-                PlaylistPage(playlists: _playlists),
+                PlaylistPage(
+                  playlists: _playlists,
+                  onPlaylistTap: _addPlaylistToQueue,
+                  onDeletePlaylist: _deletePlaylist,
+                ),
               ],
             ),
           ),
@@ -377,22 +412,50 @@ class _MainScreenState extends State<MainScreen> {
                   )
                 : Container(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    color: colorScheme.surfaceVariant.withOpacity(0.3),
+                    color: colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.3,
+                    ),
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           _currentTitle,
                           style: const TextStyle(fontWeight: FontWeight.bold),
                           maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        Slider(
-                          value: _position.inSeconds.toDouble(),
-                          max: _duration.inSeconds.toDouble() > 0
-                              ? _duration.inSeconds.toDouble()
-                              : 1.0,
-                          onChanged: (v) {
-                            _audioPlayer.seek(Duration(seconds: v.toInt()));
-                          },
+                        // 找到原本的 Slider 並替換為以下程式碼
+                        // 將 Slider 區塊改為以下 Row 結構
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          child: Row(
+                            children: [
+                              // 左側：當前播放時間
+                              Text(
+                                _formatDuration(_position),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              // 中間：進度條，使用 Expanded 填滿空間
+                              Expanded(
+                                child: Slider(
+                                  value: _position.inSeconds.toDouble(),
+                                  max: _duration.inSeconds.toDouble() > 0
+                                      ? _duration.inSeconds.toDouble()
+                                      : 1.0,
+                                  onChanged: (v) {
+                                    _audioPlayer.seek(
+                                      Duration(seconds: v.toInt()),
+                                    );
+                                  },
+                                ),
+                              ),
+                              // 右側：總時長
+                              Text(
+                                _formatDuration(_duration),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
                         ),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -541,6 +604,9 @@ class QueuePage extends StatelessWidget {
 class FileBrowserPage extends StatefulWidget {
   final String query;
   final String Function(Duration) format;
+  final Set<String> favorites;
+  final Function(String) onPlay;
+  final Function(String) onToggleFav;
   final Function(List<Song>) onBatchAdd;
   final Function(bool, int, String) onSelectionChanged;
 
@@ -548,6 +614,9 @@ class FileBrowserPage extends StatefulWidget {
     super.key,
     required this.query,
     required this.format,
+    required this.favorites,
+    required this.onPlay,
+    required this.onToggleFav,
     required this.onBatchAdd,
     required this.onSelectionChanged,
   });
@@ -557,7 +626,7 @@ class FileBrowserPage extends StatefulWidget {
 }
 
 class _FileBrowserPageState extends State<FileBrowserPage> {
-  List<Song> _allSongs = [];
+  final List<Song> _allSongs = []; // 欄位設為 final
   final Set<String> _selected = {};
   bool _isMulti = false;
   bool _isScanning = false;
@@ -589,9 +658,9 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
       final root = Directory('/storage/emulated/0');
       try {
         await for (var entity
-            in root
-                .list(recursive: true, followLinks: false)
-                .handleError((e) {})) {
+            in root.list(recursive: true, followLinks: false).handleError((e) {
+              // 靜默處理權限不足的目錄
+            })) {
           if (entity is File &&
               entity.path.toLowerCase().endsWith('.mp3') &&
               !entity.path.contains('/Android/')) {
@@ -603,7 +672,9 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
               if (tag != null && tag.duration != null) {
                 d = Duration(seconds: tag.duration!);
               }
-            } catch (e) {}
+            } catch (e) {
+              // 標籤讀取失敗時保留 Duration.zero
+            }
 
             if (mounted) {
               setState(() {
@@ -612,7 +683,9 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
             }
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        // 捕捉掃描中斷
+      }
       if (mounted) {
         setState(() {
           _isScanning = false;
@@ -655,6 +728,8 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                   itemBuilder: (ctx, idx) {
                     final s = filtered[idx];
                     bool isChecked = _selected.contains(s.path);
+                    bool isFav = widget.favorites.contains(s.path);
+
                     return ListTile(
                       leading: _isMulti
                           ? Checkbox(
@@ -679,6 +754,17 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                         widget.format(s.duration),
                         style: const TextStyle(fontSize: 10),
                       ),
+                      trailing: _isMulti
+                          ? null
+                          : IconButton(
+                              icon: Icon(
+                                isFav ? Icons.favorite : Icons.favorite_border,
+                                color: Colors.red,
+                              ),
+                              onPressed: () {
+                                widget.onToggleFav(s.path);
+                              },
+                            ),
                       onLongPress: () {
                         setState(() {
                           _isMulti = true;
@@ -696,6 +782,8 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                             }
                           });
                           _notify();
+                        } else {
+                          widget.onPlay(s.path);
                         }
                       },
                     );
@@ -739,6 +827,7 @@ class FavoritePage extends StatelessWidget {
     final list = favorites.where((p) {
       return p.split('/').last.toLowerCase().contains(query.toLowerCase());
     }).toList();
+
     return Column(
       children: [
         Container(
@@ -754,19 +843,20 @@ class FavoritePage extends StatelessWidget {
           child: ListView.builder(
             itemCount: list.length,
             itemBuilder: (ctx, idx) {
+              final path = list[idx];
               return ListTile(
                 leading: const Icon(Icons.favorite, color: Colors.red),
                 title: HighlightedText(
-                  text: list[idx].split('/').last,
+                  text: path.split('/').last,
                   query: query,
                 ),
                 onTap: () {
-                  onPlay(list[idx]);
+                  onPlay(path);
                 },
                 trailing: IconButton(
                   icon: const Icon(Icons.delete_outline),
                   onPressed: () {
-                    onToggle(list[idx]);
+                    onToggle(path);
                   },
                 ),
               );
@@ -781,18 +871,39 @@ class FavoritePage extends StatelessWidget {
 // --- 4. 清單頁面 ---
 class PlaylistPage extends StatelessWidget {
   final Map<String, List<String>> playlists;
-  const PlaylistPage({super.key, required this.playlists});
+  final Function(String) onPlaylistTap;
+  final Function(String) onDeletePlaylist;
+
+  const PlaylistPage({
+    super.key,
+    required this.playlists,
+    required this.onPlaylistTap,
+    required this.onDeletePlaylist,
+  });
 
   @override
   Widget build(BuildContext context) {
     final names = playlists.keys.toList();
+
     return ListView.builder(
       itemCount: names.length,
       itemBuilder: (ctx, idx) {
+        final name = names[idx];
         return ListTile(
           leading: const Icon(Icons.playlist_play),
-          title: Text(names[idx]),
-          subtitle: Text("共 ${playlists[names[idx]]!.length} 首歌曲"),
+          title: Text(name),
+          subtitle: Text("共 ${playlists[name]!.length} 首歌曲"),
+          onTap: () {
+            // 點擊清單：將清單歌曲加入佇列並跳轉頁面
+            onPlaylistTap(name);
+          },
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () {
+              // 這裡可以選擇直接刪除，或彈出對話框確認
+              onDeletePlaylist(name);
+            },
+          ),
         );
       },
     );
