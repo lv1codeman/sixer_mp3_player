@@ -264,10 +264,6 @@ class Song {
     return path.split('/').last;
   }
 
-  // String get songtime {
-  //   return duration.toString();
-  // }
-
   // 將 Song 物件轉為 Map 方便轉 JSON
   Map<String, dynamic> toJson() => {
     'path': path,
@@ -1470,7 +1466,7 @@ class QueuePage extends StatelessWidget {
                               )
                             : const Icon(Icons.menu),
                       ),
-                    ), //aaaaa
+                    ),
                     title: HighlightedText(
                       text: s.fileName,
                       query: query,
@@ -1485,7 +1481,6 @@ class QueuePage extends StatelessWidget {
                     ),
                     subtitle: Text(
                       format(s.duration),
-                      // s.songtime,
                       style: const TextStyle(fontSize: 10),
                     ),
                     trailing: IconButton(
