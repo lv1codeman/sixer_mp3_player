@@ -33,7 +33,8 @@ dependencies:
   path_provider: ^2.1.2 # 取得系統目錄路徑
   permission_handler: ^12.0.1 # 處理 Android 權限
   audioplayers: ^6.5.1
-  shared_preferences: ^2.5.4  # 加入這行
+  shared_preferences: ^2.5.4
+  flutter_launcher_icons: ^0.13.1
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -90,3 +91,10 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/logo.png" # 您的圖片路徑
+  # 如果您的 POCO F8 Ultra 是 Android 8.0 以上，建議設定適應性圖示 (Adaptive Icon)
+  adaptive_icon_background: "#FFFFFF" # 背景顏色
+  adaptive_icon_foreground: "assets/images/logo.png" # 前景圖片

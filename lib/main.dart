@@ -12,6 +12,54 @@ void main() {
   runApp(const SixerMP3Player());
 }
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// 自製toast
+// [修改] 寫在與 main() 同階層的全域函數
+void myToast(String message, {double durationSeconds = 2.0}) {
+  // [修改] 直接從 navigatorKey 的 currentState 取得 overlay，避免 Context 搜尋不到的問題
+  final overlayState = navigatorKey.currentState?.overlay;
+  if (overlayState == null) return;
+
+  late OverlayEntry overlayEntry;
+  overlayEntry = OverlayEntry(
+    builder: (context) => Positioned(
+      // [修改] 這裡可以直接使用 MediaQuery 取得全螢幕尺寸
+      top: MediaQuery.of(context).size.height * 0.5,
+      width: MediaQuery.of(context).size.width,
+      child: Material(
+        color: Colors.transparent,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 24.0,
+              vertical: 12.0,
+            ),
+            margin: const EdgeInsets.symmetric(horizontal: 20.0),
+            decoration: BoxDecoration(
+              // [修改] 繼續使用 withValues 語法
+              color: Colors.black.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(25.0),
+            ),
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white, fontSize: 16.0),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  // [修改] 使用 overlayState 插入
+  overlayState.insert(overlayEntry);
+
+  Future.delayed(Duration(milliseconds: (durationSeconds * 1000).toInt()), () {
+    overlayEntry.remove();
+  });
+}
+
 Widget _buildSubHeader({required String text, Widget? trailing}) {
   return ConstrainedBox(
     constraints: const BoxConstraints(minHeight: 48),
@@ -79,6 +127,7 @@ class _SixerMP3PlayerState extends State<SixerMP3Player> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'SixerMP3',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -181,6 +230,7 @@ class _MainScreenState extends State<MainScreen> {
   String _currentTitle = "未在播放";
   bool _isPlaying = false;
   int _playMode = 0; // 0: 列表, 1: 單曲, 2: 隨機
+  bool _isSwitchingTrack = false;
 
   final Set<String> _favorites = {};
   final Map<String, List<String>> _playlists = {};
@@ -190,6 +240,7 @@ class _MainScreenState extends State<MainScreen> {
   String _selectedTotalTime = "00:00";
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
+  bool _isDragging = false;
 
   @override
   void initState() {
@@ -233,18 +284,30 @@ class _MainScreenState extends State<MainScreen> {
       });
     });
     _audioPlayer.onPositionChanged.listen((p) {
-      setState(() {
-        _position = p;
-      });
+      // [修改] 只有在「沒有在拖曳」的情況下，才接受播放器的進度更新
+      if (!_isDragging) {
+        setState(() {
+          _position = p;
+        });
+      }
     });
     _audioPlayer.onPlayerStateChanged.listen((s) {
       setState(() {
         _isPlaying = (s == PlayerState.playing);
       });
     });
-    _audioPlayer.onPlayerComplete.listen((event) {
+    _audioPlayer.onPlayerComplete.listen((event) async {
+      if (_playQueue.isEmpty) return;
+      if (_isSwitchingTrack) return;
+
       if (_playMode == 1) {
-        _audioPlayer.resume();
+        await _audioPlayer.stop();
+        await Future.delayed(const Duration(milliseconds: 50));
+        if (_currentPath.isNotEmpty) {
+          await _audioPlayer.play(DeviceFileSource(_currentPath));
+        }
+        // _audioPlayer.seek(Duration.zero);
+        // _audioPlayer.resume();
       } else {
         _handleNext();
       }
@@ -290,8 +353,12 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _handlePlay(String path) async {
-    await _audioPlayer.stop();
+    if (_isSwitchingTrack) return;
+    _isSwitchingTrack = true;
+
     try {
+      await _audioPlayer.stop();
+      await Future.delayed(const Duration(milliseconds: 100));
       await _audioPlayer.play(DeviceFileSource(path));
       setState(() {
         _currentPath = path;
@@ -299,6 +366,9 @@ class _MainScreenState extends State<MainScreen> {
       });
     } catch (e) {
       debugPrint("播放失敗: $e");
+    } finally {
+      // [修改] 無論成功或失敗，結束後解鎖
+      _isSwitchingTrack = false;
     }
   }
 
@@ -566,6 +636,14 @@ class _MainScreenState extends State<MainScreen> {
               )
             : const Text("SixerMP3"),
         actions: [
+          if (!_isSearching && isBrowser) ...{
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                _fileBrowserKey.currentState?._checkPermissionAndScan();
+              },
+            ),
+          },
           // 2. 根據是否搜尋中，切換按鈕圖示與功能
           _isSearching
               ? IconButton(
@@ -594,14 +672,6 @@ class _MainScreenState extends State<MainScreen> {
             ),
             onPressed: widget.onToggleTheme, // 呼叫傳進來的切換函數
           ),
-          if (!_isSearching && isBrowser) ...{
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () {
-                _fileBrowserKey.currentState?._checkPermissionAndScan();
-              },
-            ),
-          },
         ],
       ),
       body: Column(
@@ -765,40 +835,71 @@ class _MainScreenState extends State<MainScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          _currentTitle,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5.0),
+                          // 當前播放曲目文字
+                          child: Text(
+                            _currentTitle,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 22,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         // 播放進度條
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
                           child: Row(
                             children: [
                               // 左側：當前播放時間
                               Text(
                                 _formatDuration(_position),
-                                style: const TextStyle(fontSize: 12),
+                                style: const TextStyle(fontSize: 16),
                               ),
                               // 中間：進度條，使用 Expanded 填滿空間
                               Expanded(
                                 child: Slider(
-                                  value: _position.inSeconds.toDouble(),
+                                  activeColor: colorScheme.primary,
+                                  // [修改] 加上 clamp 限制，確保 value 永遠落在 0.0 與 max 之間
+                                  value: _position.inSeconds.toDouble().clamp(
+                                    0.0,
+                                    _duration.inSeconds.toDouble() > 0
+                                        ? _duration.inSeconds.toDouble()
+                                        : 0.0,
+                                  ),
+                                  min: 0.0,
+                                  // [修改] 確保 max 至少為 0.0，避免負數
                                   max: _duration.inSeconds.toDouble() > 0
                                       ? _duration.inSeconds.toDouble()
-                                      : 1.0,
-                                  onChanged: (v) {
-                                    _audioPlayer.seek(
-                                      Duration(seconds: v.toInt()),
+                                      : 0.0,
+                                  onChangeStart: (value) {
+                                    _isDragging = true;
+                                  },
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _position = Duration(
+                                        seconds: value.toInt(),
+                                      );
+                                    });
+                                  },
+                                  onChangeEnd: (value) async {
+                                    await _audioPlayer.seek(
+                                      Duration(seconds: value.toInt()),
                                     );
+                                    // [修改] 稍微延遲一點點再解鎖，確保播放器已經跳轉到新位置
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 200),
+                                    );
+                                    _isDragging = false;
                                   },
                                 ),
                               ),
                               // 右側：總時長
                               Text(
                                 _formatDuration(_duration),
-                                style: const TextStyle(fontSize: 12),
+                                style: const TextStyle(fontSize: 16),
                               ),
                             ],
                           ),
@@ -806,6 +907,7 @@ class _MainScreenState extends State<MainScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
+                            // 收藏按鈕
                             IconButton(
                               icon: Icon(
                                 _favorites.contains(_currentPath)
@@ -813,21 +915,25 @@ class _MainScreenState extends State<MainScreen> {
                                     : Icons.favorite_border,
                                 color: Colors.red,
                               ),
+                              iconSize: 28,
                               onPressed: () {
                                 _toggleFav(_currentPath);
                               },
                             ),
+                            // 上一首按鈕
                             IconButton(
                               icon: const Icon(Icons.skip_previous),
                               onPressed: isBrowser ? null : _handlePrevious,
+                              iconSize: 40,
                             ),
+                            // 播放/暫停 按鈕
                             IconButton(
                               icon: Icon(
                                 _isPlaying
                                     ? Icons.pause_circle
                                     : Icons.play_circle,
                               ),
-                              iconSize: 42,
+                              iconSize: 64,
                               color: colorScheme.primary,
                               onPressed: () {
                                 if (_isPlaying) {
@@ -837,10 +943,13 @@ class _MainScreenState extends State<MainScreen> {
                                 }
                               },
                             ),
+                            // 下一首按鈕
                             IconButton(
                               icon: const Icon(Icons.skip_next),
                               onPressed: isBrowser ? null : _handleNext,
+                              iconSize: 40,
                             ),
+                            // 播放模式按鈕
                             IconButton(
                               icon: Icon(
                                 _playMode == 0
@@ -849,9 +958,35 @@ class _MainScreenState extends State<MainScreen> {
                                           ? Icons.repeat_one
                                           : Icons.shuffle),
                               ),
+                              iconSize: 28,
                               onPressed: () {
                                 setState(() {
                                   _playMode = (_playMode + 1) % 3;
+                                  switch (_playMode) {
+                                    case 0:
+                                      myToast(
+                                        "播放模式：全部循環",
+                                        durationSeconds: 1.5,
+                                      );
+                                      break;
+                                    case 1:
+                                      myToast(
+                                        "播放模式：單曲循環",
+                                        durationSeconds: 1.5,
+                                      );
+                                      break;
+                                    case 2:
+                                      myToast(
+                                        "播放模式：隨機循環",
+                                        durationSeconds: 1.5,
+                                      );
+                                      break;
+                                    default:
+                                      myToast(
+                                        "播放模式：全部循環",
+                                        durationSeconds: 1.5,
+                                      );
+                                  }
                                 });
                               },
                             ),
@@ -995,10 +1130,15 @@ class QueuePage extends StatelessWidget {
               final s = filtered[idx];
               // 為了防止重複歌曲在排序時報錯，Key 必須唯一
               final itemKey = ValueKey("${s.path}_$idx");
+              final bool isPlaying = (s.path == currentPath);
 
               return ListTile(
                 key: itemKey,
-                selected: (s.path == currentPath),
+                tileColor: isPlaying
+                    ? Theme.of(
+                        context,
+                      ).colorScheme.primaryContainer.withValues(alpha: 0.5)
+                    : null,
                 // 最左邊：漢堡條 (ReorderableDelayedDragStartListener 實作長按拖拉)
                 leading: ReorderableDelayedDragStartListener(
                   index: idx,
