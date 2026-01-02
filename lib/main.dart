@@ -10,20 +10,18 @@ class SixerMP3Player extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sixer MP3 Player2',
-      // 設定淺色主題
+      title: 'Sixer MP3 Player',
+      // 設定預設主題
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.deepPurple,
         brightness: Brightness.light,
       ),
-      // T2-1: 設定深色主題
       darkTheme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.deepPurple,
         brightness: Brightness.dark,
       ),
-      // 根據手機系統設定自動切換深淺色
       themeMode: ThemeMode.system,
       home: const MainScreen(),
     );
@@ -38,132 +36,194 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _selectedIndex = 1; // 預設停在檔案總管分頁
+  int _selectedIndex = 1;
   bool _isDarkMode = false;
+  bool _isSearching = false;
 
-  final List<Widget> _pages = [
-    const Center(child: Text("第一頁：播放佇列 (待實作)")),
-    const FileBrowserPage(), // P-1 實作內容
-    const Center(child: Text("第三頁：播放清單 (待實作)")),
-  ];
+  final TextEditingController _searchController = TextEditingController();
+  final GlobalKey<_FileBrowserPageState> _fileBrowserKey = GlobalKey();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Theme(
-      // 根據 _isDarkMode 決定局部主題
       data: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.deepPurple,
         brightness: _isDarkMode ? Brightness.dark : Brightness.light,
       ),
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Sixer MP3 Player'),
-          centerTitle: true,
-          // 這是你找的切換 Icon 按鈕！
-          actions: [
-            IconButton(
-              icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
-              onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
-            Expanded(
-              child: IndexedStack(
-                index: _selectedIndex,
-                // 注意：這裡要把 _pages 移到 build 裡面，
-                // 這樣切換主題時，子頁面才會跟著重繪顏色
-                children: [
-                  const Center(child: Text("第一頁：播放佇列 (待實作)")),
-                  const FileBrowserPage(),
-                  const Center(child: Text("第三頁：播放清單 (待實作)")),
-                ],
-              ),
-            ),
+      child: Builder(
+        builder: (context) {
+          final colorScheme = Theme.of(context).colorScheme;
 
-            const Divider(height: 1),
-            Container(
-              height: 80,
-              // 使用 Theme.of(context) 確保顏色同步
-              color: _isDarkMode
-                  ? Colors.black26
-                  : Colors.deepPurple.withValues(alpha: 0.1),
-              child: const Center(child: Text("播放控制欄 (待實作)")),
-            ),
-            // --- 指示條 (Indicator Bar) ---
-            Stack(
-              children: [
-                // 底色條
-                Container(
-                  height: 4,
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.3,
-                  ),
-                ),
-                // 動態移動的指示塊
-                AnimatedAlign(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeInOut,
-                  // 這裡計算對齊位置：-1.0 是最左，0.0 是中間，1.0 是最右
-                  alignment: Alignment(
-                    _selectedIndex == 0
-                        ? -1.0
-                        : (_selectedIndex == 1 ? 0.0 : 1.0),
-                    0,
-                  ),
-                  child: FractionallySizedBox(
-                    widthFactor: 1 / 3, // 三個分頁，寬度佔三分之一
-                    child: Container(
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary,
-                        borderRadius: BorderRadius.circular(2),
+          return Scaffold(
+            appBar: AppBar(
+              // T2-2: 搜尋狀態切換標題
+              title: _isSearching
+                  ? TextField(
+                      controller: _searchController,
+                      autofocus: true,
+                      style: TextStyle(color: colorScheme.onSurface),
+                      decoration: const InputDecoration(
+                        hintText: '搜尋歌曲...',
+                        border: InputBorder.none,
                       ),
-                    ),
+                      onChanged: (value) {
+                        setState(() {});
+                      },
+                    )
+                  : const Text('Sixer MP3 Player'),
+              centerTitle: false,
+              actions: [
+                // 搜尋按鈕
+                if (_isSearching) ...[
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      setState(() {
+                        _isSearching = false;
+                        _searchController.clear();
+                      });
+                    },
                   ),
+                ] else ...[
+                  IconButton(
+                    icon: const Icon(Icons.search),
+                    onPressed: () {
+                      setState(() {
+                        _isSearching = true;
+                      });
+                    },
+                  ),
+                ],
+                // 主題切換按鈕
+                IconButton(
+                  icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
+                  onPressed: () {
+                    setState(() {
+                      _isDarkMode = !_isDarkMode;
+                    });
+                  },
+                ),
+                // 重新整理按鈕
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    _fileBrowserKey.currentState?._checkPermissionAndScan();
+                  },
                 ),
               ],
             ),
-          ],
-        ),
-
-        bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _selectedIndex,
-          onTap: (index) => setState(() => _selectedIndex = index),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.queue_music),
-              label: '播放佇列',
+            body: Column(
+              children: [
+                // 主要內容區
+                Expanded(
+                  child: IndexedStack(
+                    index: _selectedIndex,
+                    children: [
+                      const Center(child: Text("第一頁：播放佇列")),
+                      FileBrowserPage(
+                        key: _fileBrowserKey,
+                        searchQuery: _searchController.text,
+                        isDark: _isDarkMode,
+                      ),
+                      const Center(child: Text("第三頁：播放清單")),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                // 底部播放控制欄
+                Container(
+                  height: 80,
+                  color: _isDarkMode
+                      ? Colors.black26
+                      : Colors.deepPurple.withValues(alpha: 0.1),
+                  child: const Center(child: Text("播放控制欄 (待實作)")),
+                ),
+                // 分頁指示條
+                Stack(
+                  children: [
+                    Container(
+                      height: 4,
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.3,
+                      ),
+                    ),
+                    AnimatedAlign(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      alignment: Alignment(
+                        _selectedIndex == 0
+                            ? -1.0
+                            : (_selectedIndex == 1 ? 0.0 : 1.0),
+                        0,
+                      ),
+                      child: FractionallySizedBox(
+                        widthFactor: 1 / 3,
+                        child: Container(
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.folder_open),
-              label: '檔案總管',
+            bottomNavigationBar: BottomNavigationBar(
+              currentIndex: _selectedIndex,
+              onTap: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.queue_music),
+                  label: '播放佇列',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.folder_open),
+                  label: '檔案總管',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.playlist_play),
+                  label: '播放清單',
+                ),
+              ],
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.playlist_play),
-              label: '播放清單',
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-// --- P-1 檔案總管實作頁面 (包含 T2-1 配色優化) ---
+// --- FileBrowserPage 實作 ---
 
 class FileBrowserPage extends StatefulWidget {
-  const FileBrowserPage({super.key});
+  final String searchQuery;
+  final bool isDark;
+  const FileBrowserPage({
+    super.key,
+    required this.searchQuery,
+    required this.isDark,
+  });
 
   @override
   State<FileBrowserPage> createState() => _FileBrowserPageState();
 }
 
 class _FileBrowserPageState extends State<FileBrowserPage> {
-  List<FileSystemEntity> _musicFiles = [];
+  List<FileSystemEntity> _allFiles = [];
   bool _isScanning = false;
 
   @override
@@ -172,24 +232,20 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
     _checkPermissionAndScan();
   }
 
-  // 1. 請求權限 (針對 Android 13+ 的 POCO F8 Ultra 優化)
   Future<void> _checkPermissionAndScan() async {
+    if (_isScanning) {
+      return;
+    }
     var status = await Permission.audio.request();
     if (status.isGranted) {
       _startSafeScan();
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("請在系統設定中授予音訊存取權限")));
-      }
     }
   }
 
-  // 2. 安全掃描邏輯：跳過受保護的 Android/data 等資料夾
   Future<void> _startSafeScan() async {
-    setState(() => _isScanning = true);
-
+    setState(() {
+      _isScanning = true;
+    });
     final rootDir = Directory('/storage/emulated/0');
     List<FileSystemEntity> foundFiles = [];
 
@@ -199,16 +255,15 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
         for (var entity in entities) {
           if (entity is File) {
             String path = entity.path.toLowerCase();
-            // 過濾副檔名
             if (path.endsWith('.mp3') ||
                 path.endsWith('.m4a') ||
                 path.endsWith('.wav')) {
               foundFiles.add(entity);
             }
           } else if (entity is Directory) {
-            // 關鍵：跳過會導致 Permission Denied 的系統目錄
-            if (entity.path.contains('/Android')) continue;
-            await safeScan(entity);
+            if (!entity.path.contains('/Android')) {
+              await safeScan(entity);
+            }
           }
         }
       } catch (e) {
@@ -217,10 +272,9 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
     }
 
     await safeScan(rootDir);
-
     if (mounted) {
       setState(() {
-        _musicFiles = foundFiles;
+        _allFiles = foundFiles;
         _isScanning = false;
       });
     }
@@ -228,42 +282,34 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
-    // 取得當前主題配色方案 (T2-1)
     final colorScheme = Theme.of(context).colorScheme;
+
+    // 搜尋過濾
+    final filteredFiles = _allFiles.where((file) {
+      final name = file.path.split('/').last.toLowerCase();
+      return name.contains(widget.searchQuery.toLowerCase());
+    }).toList();
 
     return Column(
       children: [
-        // 頂部狀態欄
-        ListTile(
-          tileColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-          title: Text(
-            "找到 ${_musicFiles.length} 首歌曲",
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: colorScheme.primary,
-            ),
+        // 修改後的狀態顯示欄
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          color: widget.isDark ? Colors.black26 : Colors.grey[200],
+          child: Text(
+            "共找到  (${filteredFiles.length} 首)",
+            style: const TextStyle(fontSize: 12),
           ),
-          trailing: _isScanning
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : IconButton(
-                  icon: Icon(Icons.refresh, color: colorScheme.primary),
-                  onPressed: _checkPermissionAndScan,
-                ),
         ),
         const Divider(height: 1),
-        // 音樂檔案列表
         Expanded(
-          child: _musicFiles.isEmpty && !_isScanning
-              ? const Center(child: Text("沒找到音樂檔案，請確認手機 Download 資料夾是否有 MP3"))
+          child: _isScanning
+              ? const Center(child: CircularProgressIndicator())
               : ListView.builder(
-                  itemCount: _musicFiles.length,
+                  itemCount: filteredFiles.length,
                   itemBuilder: (context, index) {
-                    final file = _musicFiles[index];
-                    final fileName = file.path.split('/').last;
+                    final file = filteredFiles[index];
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundColor: colorScheme.primaryContainer,
@@ -273,7 +319,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                         ),
                       ),
                       title: Text(
-                        fileName,
+                        file.path.split('/').last,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: colorScheme.onSurface),
@@ -282,12 +328,11 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                         file.path,
                         style: TextStyle(
                           fontSize: 10,
-                          // T2-1: 自動切換半透明感的文字顏色
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
                       onTap: () {
-                        // TODO: 實作加入播放佇列邏輯
+                        // 下一階段播放邏輯
                       },
                     );
                   },
