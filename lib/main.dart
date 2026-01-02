@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audiotags/audiotags.dart';
+import 'package:flutter/services.dart'; //震動提示
 
 void main() {
   runApp(const SixerMP3Player());
@@ -1145,78 +1146,98 @@ class QueuePage extends StatelessWidget {
               : null,
         ),
 
+        // --- 1. 佇列頁面 (QueuePage) ---
+        // ... 前方代碼不變 ...
         Expanded(
           child: ReorderableListView.builder(
-            // 當搜尋關鍵字不為空時，通常建議禁用排序以防索引混亂，這裡由外部邏輯處理
             onReorder: (oldIdx, newIdx) {
-              // 找到原始 queue 中的真實索引進行調整
               final int realOldIdx = queue.indexOf(filtered[oldIdx]);
               int realNewIdx = queue.indexOf(
                 filtered[newIdx > oldIdx ? newIdx - 1 : newIdx],
               );
-              if (newIdx > oldIdx) realNewIdx++;
+              if (newIdx > oldIdx) {
+                realNewIdx++;
+              }
               onReorder(realOldIdx, realNewIdx);
             },
-            buildDefaultDragHandles: false, // 自定義漢堡條
+            buildDefaultDragHandles: false,
             itemCount: filtered.length,
+            // 在 main.dart 約第 1020 行處修改
             itemBuilder: (ctx, idx) {
               final s = filtered[idx];
-              // 為了防止重複歌曲在排序時報錯，Key 必須唯一
               final itemKey = ValueKey("${s.path}_$idx");
               final bool isPlaying = (s.path == currentPath);
 
-              return ListTile(
+              // 1. 保持監聽器在最外層
+              return ReorderableDelayedDragStartListener(
                 key: itemKey,
-                tileColor: isPlaying
-                    ? Theme.of(
-                        context,
-                      ).colorScheme.primaryContainer.withValues(alpha: 0.5)
-                    : null,
-                // 最左邊：漢堡條 (ReorderableDelayedDragStartListener 實作長按拖拉)
-                leading: ReorderableDelayedDragStartListener(
-                  index: idx,
-                  child: const Icon(Icons.menu),
+                index: idx,
+                child: ListTile(
+                  tileColor: isPlaying
+                      ? Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer.withValues(alpha: 0.5)
+                      : null,
+                  // [關鍵修改]：不要在這裡寫 onLongPress: () async { ... }，這會導致不能拖曳。
+                  leading: Listener(
+                    // 使用 onPointerDown 配合延時來「模擬」系統長按判定的時間點
+                    onPointerDown: (_) {
+                      Timer(const Duration(milliseconds: 500), () async {
+                        // 如果 500ms 後手指還按著（此時 ReorderableListView 也剛好判定成功）
+                        // 這裡觸發震動
+                        await HapticFeedback.vibrate();
+                      });
+                    },
+                    child: Transform.translate(
+                      offset: Offset(isPlaying ? -6.5 : 0, 0),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: isPlaying
+                            ? const Icon(
+                                Icons.play_arrow_rounded,
+                                color: Colors.orange,
+                                size: 36,
+                              )
+                            : const Icon(Icons.menu),
+                      ),
+                    ),
+                  ),
+                  title: HighlightedText(
+                    text: s.fileName,
+                    query: query,
+                    style: TextStyle(
+                      fontWeight: isPlaying
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                      color: isPlaying
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                  ),
+                  subtitle: Text(
+                    format(s.duration),
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      myConfirmDialog(
+                        title: "確認刪除",
+                        content: "確定要從佇列中移除「${s.fileName}」嗎？",
+                        onConfirm: () {
+                          onDelete(queue.indexOf(s));
+                          myToast("已從佇列移除", durationSeconds: 1.0);
+                        },
+                      );
+                    },
+                  ),
+                  onTap: () => onPlay(s.path),
                 ),
-                title: HighlightedText(text: s.fileName, query: query),
-                subtitle: Text(
-                  format(s.duration),
-                  style: const TextStyle(fontSize: 10),
-                ),
-                // 最右邊：刪除 icon
-                trailing: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => _showDeleteConfirm(context, s),
-                ),
-                onTap: () => onPlay(s.path),
               );
             },
           ),
         ),
       ],
-    );
-  }
-
-  void _showDeleteConfirm(BuildContext context, Song song) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("確認刪除"),
-        content: Text("確定要從佇列中移除「${song.fileName}」嗎？"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("取消"),
-          ),
-          TextButton(
-            onPressed: () {
-              // 找到原始索引並刪除
-              onDelete(queue.indexOf(song));
-              Navigator.pop(ctx);
-            },
-            child: const Text("確認", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
     );
   }
 }
