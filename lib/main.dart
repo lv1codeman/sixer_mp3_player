@@ -14,8 +14,7 @@ void main() {
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// 自製toast
-// [修改] 寫在與 main() 同階層的全域函數
+// 自製全域toast
 void myToast(String message, {double durationSeconds = 2.0}) {
   // [修改] 直接從 navigatorKey 的 currentState 取得 overlay，避免 Context 搜尋不到的問題
   final overlayState = navigatorKey.currentState?.overlay;
@@ -58,6 +57,40 @@ void myToast(String message, {double durationSeconds = 2.0}) {
   Future.delayed(Duration(milliseconds: (durationSeconds * 1000).toInt()), () {
     overlayEntry.remove();
   });
+}
+
+// 全域確認對話框，支援自訂標題、內容與確認後的回呼
+void myConfirmDialog({
+  required String title,
+  required String content,
+  required VoidCallback onConfirm,
+  String confirmText = "確定",
+  String cancelText = "取消",
+  Color confirmColor = Colors.red,
+}) {
+  final context = navigatorKey.currentContext;
+  if (context == null) return;
+
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: Text(content),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: Text(cancelText),
+        ),
+        TextButton(
+          onPressed: () {
+            onConfirm(); // 執行傳入的刪除動作
+            Navigator.pop(ctx);
+          },
+          child: Text(confirmText, style: TextStyle(color: confirmColor)),
+        ),
+      ],
+    ),
+  );
 }
 
 Widget _buildSubHeader({required String text, Widget? trailing}) {
@@ -1438,7 +1471,15 @@ class FavoritePage extends StatelessWidget {
                 trailing: IconButton(
                   icon: const Icon(Icons.delete_outline),
                   onPressed: () {
-                    onToggle(path);
+                    myConfirmDialog(
+                      title: "取消收藏",
+                      content: "確定要將「${path.split('/').last}」從收藏中移除嗎？",
+                      onConfirm: () {
+                        onToggle(path);
+                        // 執行原本的刪除邏輯
+                        myToast("已移除收藏", durationSeconds: 1.0);
+                      },
+                    );
                   },
                 ),
               );
@@ -1496,7 +1537,14 @@ class PlaylistPage extends StatelessWidget {
                 trailing: IconButton(
                   icon: const Icon(Icons.delete_outline),
                   onPressed: () {
-                    onDeletePlaylist(name);
+                    myConfirmDialog(
+                      title: "刪除播放清單",
+                      content: "確定要刪除播放清單「$name」嗎？這動作無法復原。",
+                      onConfirm: () {
+                        onDeletePlaylist(name);
+                        myToast("播放清單「$name」已刪除", durationSeconds: 1.5);
+                      },
+                    );
                   },
                 ),
               );
