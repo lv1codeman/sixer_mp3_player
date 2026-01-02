@@ -40,6 +40,20 @@ class Song {
   String get fileName {
     return path.split('/').last;
   }
+
+  // 將 Song 物件轉為 Map 方便轉 JSON
+  Map<String, dynamic> toJson() => {
+    'path': path,
+    'duration': duration.inMilliseconds,
+  };
+
+  // 從 Map 還原為 Song 物件
+  factory Song.fromJson(Map<String, dynamic> json) {
+    return Song(
+      path: json['path'],
+      duration: Duration(milliseconds: json['duration']),
+    );
+  }
 }
 
 class SixerMP3Player extends StatefulWidget {
@@ -156,6 +170,7 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 1;
+  late PageController _pageController;
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey<_FileBrowserPageState> _fileBrowserKey = GlobalKey();
@@ -179,8 +194,30 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    _pageController = PageController(initialPage: _selectedIndex);
     _loadData();
     _initAudioListeners();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onBottomNavTapped(int index) {
+    if (_isMultiSelectMode) {
+      _fileBrowserKey.currentState?._cancelSelection();
+    }
+    setState(() {
+      _selectedIndex = index;
+    });
+    // 2. 讓 PageView 動畫跳轉到指定頁面
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _initAudioListeners() {
@@ -268,14 +305,24 @@ class _MainScreenState extends State<MainScreen> {
       final Song item = _playQueue.removeAt(oldIndex);
       _playQueue.insert(newIndex, item);
     });
+    _saveData();
   }
 
   // 刪除單曲邏輯
   void _handleDeleteFromQueue(int index) {
+    final String removedPath = _playQueue[index].path;
     setState(() {
       _playQueue.removeAt(index);
-      // 如果刪除的是正在播放的，可以自行決定是否停止
+      // 如果刪除的是正在播放的，停止播放
+      if (removedPath == _currentPath) {
+        _audioPlayer.stop(); // 停止播放
+        _currentPath = ""; // 清空路徑
+        _currentTitle = "未在播放"; // 重設標題
+        _position = Duration.zero; // 重設進度條
+        _duration = Duration.zero;
+      }
     });
+    _saveData();
   }
 
   void _clearQueue() {
@@ -286,6 +333,7 @@ class _MainScreenState extends State<MainScreen> {
       _currentPath = "";
       _currentTitle = "未在播放";
     });
+    _saveData();
   }
 
   void _deletePlaylist(String name) {
@@ -310,6 +358,7 @@ class _MainScreenState extends State<MainScreen> {
         _selectedIndex = 0; // 跳轉到佇列頁面
       });
     }
+    _saveData();
   }
 
   // 整合後的通用方法：傳入要儲存的歌曲路徑清單
@@ -435,6 +484,16 @@ class _MainScreenState extends State<MainScreen> {
           _playlists[k] = (v as List).cast<String>();
         });
       }
+
+      // --- 新增：載入佇列歌曲 ---
+      final String? queueJson = prefs.getString('queue');
+      if (queueJson != null) {
+        final List<dynamic> decodedQueue = jsonDecode(queueJson);
+        _playQueue.clear();
+        _playQueue.addAll(
+          decodedQueue.map((item) => Song.fromJson(item)).toList(),
+        );
+      }
     });
   }
 
@@ -442,6 +501,12 @@ class _MainScreenState extends State<MainScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('fav', jsonEncode(_favorites.toList()));
     await prefs.setString('list', jsonEncode(_playlists));
+
+    // --- 新增：儲存佇列歌曲 ---
+    final String queueJson = jsonEncode(
+      _playQueue.map((s) => s.toJson()).toList(),
+    );
+    await prefs.setString('queue', queueJson);
   }
 
   // 頁面指示器
@@ -536,8 +601,14 @@ class _MainScreenState extends State<MainScreen> {
       body: Column(
         children: [
           Expanded(
-            child: IndexedStack(
-              index: _selectedIndex,
+            child: PageView(
+              controller: _pageController,
+              // 3. 當手指滑動頁面完成後，同步更新底部的索引狀態
+              onPageChanged: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
               children: [
                 QueuePage(
                   queue: _playQueue,
@@ -572,6 +643,7 @@ class _MainScreenState extends State<MainScreen> {
                     setState(() {
                       _playQueue.addAll(songs);
                     });
+                    _saveData();
                   },
                   onSelectionChanged: (mode, count, time) {
                     setState(() {
@@ -802,14 +874,7 @@ class _MainScreenState extends State<MainScreen> {
             unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant
                 .withValues(alpha: 0.6), // 使用新的 withValues 語法
             type: BottomNavigationBarType.fixed,
-            onTap: (i) {
-              if (_isMultiSelectMode) {
-                _fileBrowserKey.currentState?._cancelSelection();
-              }
-              setState(() {
-                _selectedIndex = i;
-              });
-            },
+            onTap: _onBottomNavTapped,
             items: const [
               BottomNavigationBarItem(
                 icon: Icon(Icons.queue_music),
@@ -1002,12 +1067,16 @@ class FileBrowserPage extends StatefulWidget {
   State<FileBrowserPage> createState() => _FileBrowserPageState();
 }
 
-class _FileBrowserPageState extends State<FileBrowserPage> {
+class _FileBrowserPageState extends State<FileBrowserPage>
+    with AutomaticKeepAliveClientMixin {
   final List<Song> _allSongs = []; // 欄位設為 final
   final Set<String> _selected = {};
   List<String> get selectedPaths => _selected.toList();
   bool _isMulti = false;
   bool _isScanning = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   void _cancelSelection() {
     setState(() {
@@ -1074,6 +1143,7 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final filtered = _allSongs.where((s) {
       return s.fileName.toLowerCase().contains(widget.query.toLowerCase());
     }).toList();
