@@ -42,8 +42,25 @@ class Song {
   }
 }
 
-class SixerMP3Player extends StatelessWidget {
+class SixerMP3Player extends StatefulWidget {
   const SixerMP3Player({super.key});
+
+  @override
+  State<SixerMP3Player> createState() => _SixerMP3PlayerState();
+}
+
+class _SixerMP3PlayerState extends State<SixerMP3Player> {
+  // 建立一個變數來儲存主題狀態
+  ThemeMode _themeMode = ThemeMode.system;
+
+  // 切換主題的方法
+  void _toggleTheme() {
+    setState(() {
+      _themeMode = _themeMode == ThemeMode.dark
+          ? ThemeMode.light
+          : ThemeMode.dark;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,8 +77,9 @@ class SixerMP3Player extends StatelessWidget {
         colorSchemeSeed: Colors.deepPurple,
         brightness: Brightness.dark,
       ),
-      themeMode: ThemeMode.system,
-      home: const MainScreen(),
+      themeMode: _themeMode, // 使用動態的 _themeMode
+      // 將切換功能傳遞給 MainScreen
+      home: MainScreen(onToggleTheme: _toggleTheme),
     );
   }
 }
@@ -130,7 +148,8 @@ class HighlightedText extends StatelessWidget {
 }
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final VoidCallback onToggleTheme;
+  const MainScreen({super.key, required this.onToggleTheme});
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
@@ -488,6 +507,14 @@ class _MainScreenState extends State<MainScreen> {
                     });
                   },
                 ),
+          IconButton(
+            icon: Icon(
+              Theme.of(context).brightness == Brightness.light
+                  ? Icons.dark_mode
+                  : Icons.light_mode,
+            ),
+            onPressed: widget.onToggleTheme, // 呼叫傳進來的切換函數
+          ),
           if (!_isSearching && isBrowser) ...{
             IconButton(
               icon: const Icon(Icons.refresh),
