@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 void main() => runApp(const SixerMP3Player());
 
@@ -11,7 +14,6 @@ class SixerMP3Player extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Sixer MP3 Player',
-      // 設定預設主題
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.deepPurple,
@@ -39,14 +41,83 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 1;
   bool _isDarkMode = false;
   bool _isSearching = false;
-
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey<_FileBrowserPageState> _fileBrowserKey = GlobalKey();
 
+  // --- 播放器狀態 ---
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  String _currentTitle = "未在播放";
+  bool _isPlaying = false;
+  bool _isFavorite = false;
+
+  // 0: 列表循環 (Repeat All), 1: 單曲循環 (Repeat One), 2: 隨機播放 (Shuffle)
+  int _playMode = 0;
+
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  StreamSubscription? _durationSub, _positionSub, _stateSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _durationSub = _audioPlayer.onDurationChanged.listen(
+      (d) => setState(() => _duration = d),
+    );
+    _positionSub = _audioPlayer.onPositionChanged.listen(
+      (p) => setState(() => _position = p),
+    );
+    _stateSub = _audioPlayer.onPlayerStateChanged.listen(
+      (s) => setState(() => _isPlaying = s == PlayerState.playing),
+    );
+
+    // 播放結束後的處理
+    _audioPlayer.onPlayerComplete.listen((event) {
+      if (_playMode == 1) {
+        _audioPlayer.resume(); // 單曲循環：直接重播
+      } else {
+        // 這裡預留給下一首 (下一階段實作)
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _durationSub?.cancel();
+    _positionSub?.cancel();
+    _stateSub?.cancel();
+    _audioPlayer.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _handlePlay(String path) async {
+    await _audioPlayer.stop();
+    await _audioPlayer.play(DeviceFileSource(path));
+    setState(() => _currentTitle = path.split('/').last);
+  }
+
+  // 取得播放模式的圖示
+  IconData _getPlayModeIcon() {
+    switch (_playMode) {
+      case 1:
+        return Icons.repeat_one; // 單曲
+      case 2:
+        return Icons.shuffle; // 隨機
+      default:
+        return Icons.repeat; // 列表循環
+    }
+  }
+
+  // 取得播放模式的文字描述 (可選)
+  String _getPlayModeText() {
+    switch (_playMode) {
+      case 1:
+        return "單曲播放";
+      case 2:
+        return "隨機播放";
+      default:
+        return "循環播放";
+    }
   }
 
   @override
@@ -63,65 +134,38 @@ class _MainScreenState extends State<MainScreen> {
 
           return Scaffold(
             appBar: AppBar(
-              // T2-2: 搜尋狀態切換標題
               title: _isSearching
                   ? TextField(
                       controller: _searchController,
                       autofocus: true,
-                      style: TextStyle(color: colorScheme.onSurface),
                       decoration: const InputDecoration(
                         hintText: '搜尋歌曲...',
                         border: InputBorder.none,
                       ),
-                      onChanged: (value) {
-                        setState(() {});
-                      },
+                      onChanged: (value) => setState(() {}),
                     )
                   : const Text('Sixer MP3 Player'),
-              centerTitle: false,
               actions: [
-                // 搜尋按鈕
-                if (_isSearching) ...[
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      setState(() {
-                        _isSearching = false;
-                        _searchController.clear();
-                      });
-                    },
-                  ),
-                ] else ...[
-                  IconButton(
-                    icon: const Icon(Icons.search),
-                    onPressed: () {
-                      setState(() {
-                        _isSearching = true;
-                      });
-                    },
-                  ),
-                ],
-                // 主題切換按鈕
+                IconButton(
+                  icon: Icon(_isSearching ? Icons.close : Icons.search),
+                  onPressed: () => setState(() {
+                    _isSearching = !_isSearching;
+                    if (!_isSearching) _searchController.clear();
+                  }),
+                ),
                 IconButton(
                   icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
-                  onPressed: () {
-                    setState(() {
-                      _isDarkMode = !_isDarkMode;
-                    });
-                  },
+                  onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
                 ),
-                // 重新整理按鈕
                 IconButton(
                   icon: const Icon(Icons.refresh),
-                  onPressed: () {
-                    _fileBrowserKey.currentState?._checkPermissionAndScan();
-                  },
+                  onPressed: () =>
+                      _fileBrowserKey.currentState?._checkPermissionAndScan(),
                 ),
               ],
             ),
             body: Column(
               children: [
-                // 主要內容區
                 Expanded(
                   child: IndexedStack(
                     index: _selectedIndex,
@@ -131,20 +175,118 @@ class _MainScreenState extends State<MainScreen> {
                         key: _fileBrowserKey,
                         searchQuery: _searchController.text,
                         isDark: _isDarkMode,
+                        onFileTap: _handlePlay,
                       ),
                       const Center(child: Text("第三頁：播放清單")),
                     ],
                   ),
                 ),
                 const Divider(height: 1),
-                // 底部播放控制欄
+
+                // --- 播放控制區 ---
                 Container(
-                  height: 80,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   color: _isDarkMode
-                      ? Colors.black26
-                      : Colors.deepPurple.withValues(alpha: 0.1),
-                  child: const Center(child: Text("播放控制欄 (待實作)")),
+                      ? Colors.black38
+                      : colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.3,
+                        ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _currentTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+
+                      Slider(
+                        value: _position.inSeconds.toDouble(),
+                        max: _duration.inSeconds.toDouble() > 0
+                            ? _duration.inSeconds.toDouble()
+                            : 1.0,
+                        onChanged: (v) =>
+                            _audioPlayer.seek(Duration(seconds: v.toInt())),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _formatDuration(_position),
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                            Text(
+                              _formatDuration(_duration),
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // 控制按鈕
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          // 1. 收藏鍵
+                          IconButton(
+                            icon: Icon(
+                              _isFavorite
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
+                            ),
+                            color: _isFavorite ? Colors.red : null,
+                            onPressed: () =>
+                                setState(() => _isFavorite = !_isFavorite),
+                          ),
+                          // 2. 上一首
+                          IconButton(
+                            icon: const Icon(Icons.skip_previous),
+                            onPressed: () {},
+                          ),
+                          // 3. 播放/暫停
+                          IconButton(
+                            iconSize: 48,
+                            icon: Icon(
+                              _isPlaying
+                                  ? Icons.pause_circle_filled
+                                  : Icons.play_circle_filled,
+                            ),
+                            color: colorScheme.primary,
+                            onPressed: () => _isPlaying
+                                ? _audioPlayer.pause()
+                                : _audioPlayer.resume(),
+                          ),
+                          // 4. 下一首
+                          IconButton(
+                            icon: const Icon(Icons.skip_next),
+                            onPressed: () {},
+                          ),
+                          // 5. 整合後的播放模式切換鈕
+                          IconButton(
+                            icon: Icon(_getPlayModeIcon()),
+                            color: colorScheme.primary,
+                            onPressed: () {
+                              setState(() {
+                                _playMode = (_playMode + 1) % 3;
+                              });
+                              // 顯示提示
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text("模式：${_getPlayModeText()}"),
+                                  duration: const Duration(milliseconds: 500),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
+
                 // 分頁指示條
                 Stack(
                   children: [
@@ -180,11 +322,7 @@ class _MainScreenState extends State<MainScreen> {
             ),
             bottomNavigationBar: BottomNavigationBar(
               currentIndex: _selectedIndex,
-              onTap: (index) {
-                setState(() {
-                  _selectedIndex = index;
-                });
-              },
+              onTap: (i) => setState(() => _selectedIndex = i),
               items: const [
                 BottomNavigationBarItem(
                   icon: Icon(Icons.queue_music),
@@ -205,19 +343,24 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
+
+  String _formatDuration(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    return "${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}";
+  }
 }
 
-// --- FileBrowserPage 實作 ---
-
+// --- FileBrowserPage 保持不變 ---
 class FileBrowserPage extends StatefulWidget {
   final String searchQuery;
   final bool isDark;
+  final Function(String) onFileTap;
   const FileBrowserPage({
     super.key,
     required this.searchQuery,
     required this.isDark,
+    required this.onFileTap,
   });
-
   @override
   State<FileBrowserPage> createState() => _FileBrowserPageState();
 }
@@ -233,22 +376,15 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
   }
 
   Future<void> _checkPermissionAndScan() async {
-    if (_isScanning) {
-      return;
-    }
+    if (_isScanning) return;
     var status = await Permission.audio.request();
-    if (status.isGranted) {
-      _startSafeScan();
-    }
+    if (status.isGranted) _startSafeScan();
   }
 
   Future<void> _startSafeScan() async {
-    setState(() {
-      _isScanning = true;
-    });
+    setState(() => _isScanning = true);
     final rootDir = Directory('/storage/emulated/0');
     List<FileSystemEntity> foundFiles = [];
-
     Future<void> safeScan(Directory dir) async {
       try {
         final entities = dir.listSync(recursive: false);
@@ -257,42 +393,38 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
             String path = entity.path.toLowerCase();
             if (path.endsWith('.mp3') ||
                 path.endsWith('.m4a') ||
-                path.endsWith('.wav')) {
+                path.endsWith('.wav'))
               foundFiles.add(entity);
-            }
-          } else if (entity is Directory) {
-            if (!entity.path.contains('/Android')) {
-              await safeScan(entity);
-            }
+          } else if (entity is Directory && !entity.path.contains('/Android')) {
+            await safeScan(entity);
           }
         }
       } catch (e) {
-        debugPrint("跳過無法存取的目錄: ${dir.path}");
+        debugPrint("Skip: ${dir.path}");
       }
     }
 
     await safeScan(rootDir);
-    if (mounted) {
+    if (mounted)
       setState(() {
         _allFiles = foundFiles;
         _isScanning = false;
       });
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    // 搜尋過濾
-    final filteredFiles = _allFiles.where((file) {
-      final name = file.path.split('/').last.toLowerCase();
-      return name.contains(widget.searchQuery.toLowerCase());
-    }).toList();
-
+    final filteredFiles = _allFiles
+        .where(
+          (file) => file.path
+              .split('/')
+              .last
+              .toLowerCase()
+              .contains(widget.searchQuery.toLowerCase()),
+        )
+        .toList();
     return Column(
       children: [
-        // 修改後的狀態顯示欄
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
@@ -311,29 +443,19 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                   itemBuilder: (context, index) {
                     final file = filteredFiles[index];
                     return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: colorScheme.primaryContainer,
-                        child: Icon(
-                          Icons.music_note,
-                          color: colorScheme.onPrimaryContainer,
-                        ),
+                      leading: const CircleAvatar(
+                        child: Icon(Icons.music_note),
                       ),
                       title: Text(
                         file.path.split('/').last,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: colorScheme.onSurface),
                       ),
                       subtitle: Text(
                         file.path,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
+                        style: const TextStyle(fontSize: 10),
                       ),
-                      onTap: () {
-                        // 下一階段播放邏輯
-                      },
+                      onTap: () => widget.onFileTap(file.path),
                     );
                   },
                 ),
