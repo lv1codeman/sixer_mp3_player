@@ -417,6 +417,33 @@ class _MainScreenState extends State<MainScreen> {
     await prefs.setString('list', jsonEncode(_playlists));
   }
 
+  // 頁面指示器
+  Widget _buildTopIndicatorBar(BuildContext context, int currentIndex) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return SizedBox(
+      width: double.infinity,
+      height: 3, // 指示線的高度
+      child: Row(
+        children: List.generate(4, (i) {
+          return Expanded(
+            child: Container(
+              // horizontal 的數值決定線條的長度，越大線條越短
+              margin: EdgeInsets.zero,
+              decoration: BoxDecoration(
+                // 只有選中的索引才顯示顏色，其餘透明
+                color: i == currentIndex
+                    ? colorScheme.primary
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -473,19 +500,6 @@ class _MainScreenState extends State<MainScreen> {
       ),
       body: Column(
         children: [
-          // if (_isSearching) ...{
-          //   Padding(
-          //     padding: const EdgeInsets.symmetric(horizontal: 16),
-          //     child: TextField(
-          //       controller: _searchController,
-          //       autofocus: true,
-          //       decoration: const InputDecoration(hintText: "搜尋音樂..."),
-          //       onChanged: (v) {
-          //         setState(() {});
-          //       },
-          //     ),
-          //   ),
-          // },
           Expanded(
             child: IndexedStack(
               index: _selectedIndex,
@@ -534,6 +548,7 @@ class _MainScreenState extends State<MainScreen> {
               ],
             ),
           ),
+
           const Divider(height: 1),
           if (!isPlaylistPage) ...{
             _isMultiSelectMode
@@ -709,24 +724,49 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                   ),
           },
+          if (!isPlaylistPage) const Divider(height: 1),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        type: BottomNavigationBarType.fixed,
-        onTap: (i) {
-          if (_isMultiSelectMode) {
-            _fileBrowserKey.currentState?._cancelSelection();
-          }
-          setState(() {
-            _selectedIndex = i;
-          });
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.queue_music), label: '佇列'),
-          BottomNavigationBarItem(icon: Icon(Icons.folder_open), label: '瀏覽'),
-          BottomNavigationBarItem(icon: Icon(Icons.favorite), label: '收藏'),
-          BottomNavigationBarItem(icon: Icon(Icons.playlist_play), label: '清單'),
+
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min, // 關鍵：確保不佔用多餘空間
+        children: [
+          // 1. 放置指示條
+          _buildTopIndicatorBar(context, _selectedIndex),
+
+          // 2. 原本的 BottomNavigationBar
+          BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            elevation: 0, // 設為 0 讓它跟上面的指示條貼合
+            selectedItemColor: Theme.of(context).colorScheme.primary,
+            unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant
+                .withValues(alpha: 0.6), // 使用新的 withValues 語法
+            type: BottomNavigationBarType.fixed,
+            onTap: (i) {
+              if (_isMultiSelectMode) {
+                _fileBrowserKey.currentState?._cancelSelection();
+              }
+              setState(() {
+                _selectedIndex = i;
+              });
+            },
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.queue_music),
+                label: '佇列',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.folder_open),
+                label: '瀏覽',
+              ),
+              BottomNavigationBarItem(icon: Icon(Icons.favorite), label: '收藏'),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.playlist_play),
+                label: '清單',
+              ),
+            ],
+          ),
         ],
       ),
     );
