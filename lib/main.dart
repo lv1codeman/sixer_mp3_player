@@ -1167,28 +1167,21 @@ class QueuePage extends StatelessWidget {
               final s = filtered[idx];
               final itemKey = ValueKey("${s.path}_$idx");
               final bool isPlaying = (s.path == currentPath);
-
-              // 1. 保持監聽器在最外層
+              // Timer? dragTimer;
+              // 1. 將 Listener 放在最外層，確保整個 ListTile 都能觸發計時器
               return ReorderableDelayedDragStartListener(
                 key: itemKey,
                 index: idx,
-                child: ListTile(
-                  tileColor: isPlaying
-                      ? Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer.withValues(alpha: 0.5)
-                      : null,
-                  // [關鍵修改]：不要在這裡寫 onLongPress: () async { ... }，這會導致不能拖曳。
-                  leading: Listener(
-                    // 使用 onPointerDown 配合延時來「模擬」系統長按判定的時間點
-                    onPointerDown: (_) {
-                      Timer(const Duration(milliseconds: 500), () async {
-                        // 如果 500ms 後手指還按著（此時 ReorderableListView 也剛好判定成功）
-                        // 這裡觸發震動
-                        await HapticFeedback.vibrate();
-                      });
-                    },
-                    child: Transform.translate(
+                child: Listener(
+                  //放棄震動
+                  child: ListTile(
+                    tileColor: isPlaying
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.primaryContainer.withValues(alpha: 0.5)
+                        : null,
+                    // 這裡不再需要包裹 Listener，避免手勢攔截
+                    leading: Transform.translate(
                       offset: Offset(isPlaying ? -6.5 : 0, 0),
                       child: Padding(
                         padding: const EdgeInsets.all(8.0),
@@ -1201,37 +1194,37 @@ class QueuePage extends StatelessWidget {
                             : const Icon(Icons.menu),
                       ),
                     ),
-                  ),
-                  title: HighlightedText(
-                    text: s.fileName,
-                    query: query,
-                    style: TextStyle(
-                      fontWeight: isPlaying
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: isPlaying
-                          ? Theme.of(context).colorScheme.primary
-                          : null,
+                    title: HighlightedText(
+                      text: s.fileName,
+                      query: query,
+                      style: TextStyle(
+                        fontWeight: isPlaying
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        color: isPlaying
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
                     ),
+                    subtitle: Text(
+                      format(s.duration),
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        myConfirmDialog(
+                          title: "確認刪除",
+                          content: "確定要從佇列中移除「${s.fileName}」嗎？",
+                          onConfirm: () {
+                            onDelete(queue.indexOf(s));
+                            myToast("已從佇列移除", durationSeconds: 1.0);
+                          },
+                        );
+                      },
+                    ),
+                    onTap: () => onPlay(s.path),
                   ),
-                  subtitle: Text(
-                    format(s.duration),
-                    style: const TextStyle(fontSize: 10),
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      myConfirmDialog(
-                        title: "確認刪除",
-                        content: "確定要從佇列中移除「${s.fileName}」嗎？",
-                        onConfirm: () {
-                          onDelete(queue.indexOf(s));
-                          myToast("已從佇列移除", durationSeconds: 1.0);
-                        },
-                      );
-                    },
-                  ),
-                  onTap: () => onPlay(s.path),
                 ),
               );
             },
