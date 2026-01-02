@@ -4,14 +4,154 @@ import 'dart:math';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audiotags/audiotags.dart';
-import 'package:flutter/services.dart'; //震動提示
+import 'package:just_audio/just_audio.dart';
+import 'package:audio_service/audio_service.dart';
 
-void main() {
+// 建立全域的 AudioHandler 實例
+late MyAudioHandler _audioHandler;
+
+class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
+  final _player = AudioPlayer(); // 這是 just_audio 的播放器
+  VoidCallback? onComplete;
+  VoidCallback? onSkipNext;
+  VoidCallback? onSkipPrevious;
+
+  MyAudioHandler() {
+    // 監聽播放狀態並傳遞給系統通知列
+    // _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+    _player.playbackEventStream.map(_transformEvent).listen((state) {
+      // 檢查是否已被關閉，避免 Bad state
+      if (!playbackState.isClosed) {
+        playbackState.add(state);
+      }
+    });
+    _player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        final position = _player.position;
+        final duration = _player.duration ?? Duration.zero;
+        if (position.inSeconds > 0 &&
+            (duration.inSeconds - position.inSeconds).abs() < 2) {
+          debugPrint("歌曲播放完畢，跳下一首");
+          skipToNext();
+        } else {
+          debugPrint("偵測到異常完成狀態，停止播放避免連跳。Pos: $position, Dur: $duration");
+          _player.stop();
+        }
+      }
+    });
+  }
+  Future<void> setLoopMode(LoopMode mode) => _player.setLoopMode(mode);
+  @override
+  Future<void> skipToNext() async {
+    // 執行 UI 傳進來的下一首邏輯 (處理隨機或順序)
+    onSkipNext?.call();
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    if (onSkipPrevious != null) {
+      onSkipPrevious!();
+    }
+  }
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> stop() async {
+    await _player.stop();
+    // 清除當前媒體資訊，防止 UI 繼續接收舊數據
+    // mediaItem.add(null);
+    await super.stop();
+  }
+
+  // 處理播放路徑與通知列資訊
+  Future<void> playPath(String path) async {
+    try {
+      await _player.stop();
+
+      // 解決 BAD_INDEX 的關鍵：增加極短的延遲，讓系統回收 c2.android.mp3.decoder
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      // 使用 setFilePath 載入
+      final duration = await _player.setFilePath(path);
+
+      mediaItem.add(
+        MediaItem(
+          id: path,
+          album: "SixerMP3",
+          title: path.split('/').last,
+          duration: duration,
+        ),
+      );
+
+      _player.play();
+      playbackState.add(_transformEvent(_player.playbackEvent));
+    } catch (e) {
+      debugPrint("Handler playPath Error: $e");
+      // _isSwitchingTrack = false;
+      // Future.delayed(const Duration(milliseconds: 500), () {
+      // onSkipNext?.call();
+      // });
+    }
+  }
+
+  // 將 just_audio 的狀態轉換為系統通知列格式
+  PlaybackState _transformEvent(PlaybackEvent event) {
+    return PlaybackState(
+      controls: [
+        MediaControl.skipToPrevious,
+        if (_player.playing) MediaControl.pause else MediaControl.play,
+        MediaControl.stop,
+        MediaControl.skipToNext,
+      ],
+      systemActions: const {MediaAction.seek},
+      androidCompactActionIndices: const [0, 1, 3],
+      processingState:
+          const {
+            ProcessingState.idle: AudioProcessingState.idle,
+            ProcessingState.loading: AudioProcessingState.loading,
+            ProcessingState.buffering: AudioProcessingState.buffering,
+            ProcessingState.ready: AudioProcessingState.ready,
+            ProcessingState.completed: AudioProcessingState.completed,
+          }[_player.processingState] ??
+          AudioProcessingState.idle,
+      playing: _player.playing,
+      updatePosition: _player.position,
+      updateTime: DateTime.now(),
+      bufferedPosition: _player.bufferedPosition,
+      speed: _player.speed,
+    );
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 初始化背景播放服務
+  _audioHandler = await AudioService.init(
+    builder: () => MyAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.sixer.mp3.channel.audio',
+      androidNotificationChannelName: 'SixerMP3 播放控制',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    ),
+  );
+
   runApp(const SixerMP3Player());
 }
+
+// void main() {
+//   runApp(const SixerMP3Player());
+// }
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -116,12 +256,17 @@ Widget _buildSubHeader({required String text, Widget? trailing}) {
 // --- 歌曲資料模型 ---
 class Song {
   final String path;
+  final String title;
   final Duration duration;
-  Song({required this.path, required this.duration});
+  Song({required this.path, required this.title, required this.duration});
 
   String get fileName {
     return path.split('/').last;
   }
+
+  // String get songtime {
+  //   return duration.toString();
+  // }
 
   // 將 Song 物件轉為 Map 方便轉 JSON
   Map<String, dynamic> toJson() => {
@@ -133,6 +278,7 @@ class Song {
   factory Song.fromJson(Map<String, dynamic> json) {
     return Song(
       path: json['path'],
+      title: json['title'] ?? "未知曲目",
       duration: Duration(milliseconds: json['duration']),
     );
   }
@@ -251,15 +397,18 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   int _selectedIndex = 1;
   late PageController _pageController;
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey<_FileBrowserPageState> _fileBrowserKey = GlobalKey();
 
-  final AudioPlayer _audioPlayer = AudioPlayer();
   final List<Song> _playQueue = [];
+  final List<Song> _allSongs = []; // 歌曲總表搬到這裡
+  bool _isScanning = false;
   String _currentPath = "";
   String _currentTitle = "未在播放";
   bool _isPlaying = false;
@@ -279,21 +428,124 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 4, vsync: this);
+    // _initData();
+    _audioHandler.onSkipNext = _handleNext;
+    _audioHandler.onSkipPrevious = _handlePrevious;
     _pageController = PageController(initialPage: _selectedIndex);
     _loadData().then((_) {
       // 確保資料載入後，自動執行掃描
       // 使用 WidgetsBinding 確保在第一幀渲染完成後執行，避免與 UI 構建衝突
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _fileBrowserKey.currentState?._checkPermissionAndScan();
+        _checkPermissionAndScan();
       });
     });
-    _initAudioListeners();
+    // [修改] 監聽背景播放狀態，同步 UI 按鈕
+    _audioHandler.playbackState.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isPlaying = state.playing;
+          if (!_isDragging) {
+            _position = state.updatePosition;
+          }
+        });
+      }
+    });
+    _audioHandler.mediaItem.listen((item) {
+      if (item != null && mounted) {
+        setState(() {
+          // 取代 onDurationChanged
+          _duration = item.duration ?? Duration.zero;
+          // 同步當前路徑與標題
+          _currentPath = item.id;
+          _currentTitle = item.title;
+        });
+      }
+    });
+    _audioHandler.onComplete = _handleNext;
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
+    _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkPermissionAndScan() async {
+    // 適配 Android 13+
+    bool hasPermission = false;
+    if (Platform.isAndroid) {
+      hasPermission =
+          await Permission.audio.request().isGranted ||
+          await Permission.storage.request().isGranted;
+    }
+
+    if (hasPermission) {
+      setState(() {
+        _isScanning = true;
+        _allSongs.clear();
+      });
+
+      final root = Directory('/storage/emulated/0');
+      final List<Song> tempSongs = []; // 使用暫存清單
+
+      try {
+        // 1. 快速掃描路徑，暫時不讀取 AudioTags
+        await for (var entity
+            in root
+                .list(recursive: true, followLinks: false)
+                .handleError((e) {})) {
+          if (entity is File &&
+              entity.path.toLowerCase().endsWith('.mp3') &&
+              !entity.path.contains('/Android/')) {
+            // 這裡先給 Duration.zero，追求最快掃描速度
+
+            final player = AudioPlayer();
+            Duration? d;
+            try {
+              // 這會稍微增加掃描時間，但能獲得正確時長
+              d = await player.setFilePath(entity.path);
+            } catch (e) {
+              debugPrint("讀取時長出錯: $e");
+            } finally {
+              await player.dispose();
+            }
+
+            tempSongs.add(
+              Song(
+                path: entity.path,
+                title: entity.path.split('/').last,
+                duration: d ?? Duration.zero,
+              ),
+            );
+
+            // 每找到 20 首歌更新一次 UI，兼顧進度顯示與效能
+            if (tempSongs.length % 20 == 0) {
+              if (mounted) {
+                setState(() {
+                  _allSongs.clear(); // 先清空原本的內容
+                  _allSongs.addAll(tempSongs); // 再把掃描到的新歌加進去
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("掃描中斷: $e");
+      }
+
+      if (mounted) {
+        setState(() {
+          // [修正] 不能直接賦值，改用 clear + addAll
+          _allSongs.clear();
+          _allSongs.addAll(tempSongs);
+          _isScanning = false;
+        });
+        _saveData(); // 掃描完存檔
+      }
+    } else {
+      myToast("未取得讀取權限");
+    }
   }
 
   void _onBottomNavTapped(int index) {
@@ -309,43 +561,6 @@ class _MainScreenState extends State<MainScreen> {
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
     );
-  }
-
-  void _initAudioListeners() {
-    _audioPlayer.onDurationChanged.listen((d) {
-      setState(() {
-        _duration = d;
-      });
-    });
-    _audioPlayer.onPositionChanged.listen((p) {
-      // [修改] 只有在「沒有在拖曳」的情況下，才接受播放器的進度更新
-      if (!_isDragging) {
-        setState(() {
-          _position = p;
-        });
-      }
-    });
-    _audioPlayer.onPlayerStateChanged.listen((s) {
-      setState(() {
-        _isPlaying = (s == PlayerState.playing);
-      });
-    });
-    _audioPlayer.onPlayerComplete.listen((event) async {
-      if (_playQueue.isEmpty) return;
-      if (_isSwitchingTrack) return;
-
-      if (_playMode == 1) {
-        await _audioPlayer.stop();
-        await Future.delayed(const Duration(milliseconds: 50));
-        if (_currentPath.isNotEmpty) {
-          await _audioPlayer.play(DeviceFileSource(_currentPath));
-        }
-        // _audioPlayer.seek(Duration.zero);
-        // _audioPlayer.resume();
-      } else {
-        _handleNext();
-      }
-    });
   }
 
   String _formatDuration(Duration d) {
@@ -387,22 +602,28 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _handlePlay(String path) async {
+    debugPrint(">>> [HandlePlay] 收到點擊請求: $path");
     if (_isSwitchingTrack) return;
+    debugPrint(">>> [HandlePlay] 請求被攔截：播放器正在切換中 (isSwitchingTrack = true)");
     _isSwitchingTrack = true;
-
     try {
-      await _audioPlayer.stop();
-      await Future.delayed(const Duration(milliseconds: 100));
-      await _audioPlayer.play(DeviceFileSource(path));
       setState(() {
+        _position = Duration.zero;
         _currentPath = path;
         _currentTitle = path.split('/').last;
+        _isDragging = false;
       });
+      // 透過 handler 播放，這樣通知列才會同步更新
+      await _audioHandler.playPath(path).timeout(const Duration(seconds: 3));
     } catch (e) {
       debugPrint("播放失敗: $e");
+      _isSwitchingTrack = false; // 發生錯誤立即解鎖
     } finally {
-      // [修改] 無論成功或失敗，結束後解鎖
-      _isSwitchingTrack = false;
+      if (mounted) {
+        setState(() {
+          _isSwitchingTrack = false;
+        });
+      }
     }
   }
 
@@ -425,7 +646,7 @@ class _MainScreenState extends State<MainScreen> {
       _playQueue.removeAt(index);
       // 如果刪除的是正在播放的，停止播放
       if (removedPath == _currentPath) {
-        _audioPlayer.stop(); // 停止播放
+        _audioHandler.stop(); // 停止播放
         _currentPath = ""; // 清空路徑
         _currentTitle = "未在播放"; // 重設標題
         _position = Duration.zero; // 重設進度條
@@ -435,15 +656,19 @@ class _MainScreenState extends State<MainScreen> {
     _saveData();
   }
 
-  void _clearQueue() {
-    setState(() {
-      _playQueue.clear();
-      // 這裡可以選擇是否要同時停止播放，如果要停止則加上：
-      _audioPlayer.stop();
-      _currentPath = "";
-      _currentTitle = "未在播放";
-    });
-    _saveData();
+  void _clearQueue() async {
+    await _audioHandler.stop();
+    if (mounted) {
+      setState(() {
+        _playQueue.clear();
+        _currentPath = "";
+        _currentTitle = "未在播放";
+        _position = Duration.zero;
+        _duration = Duration.zero;
+        _isPlaying = false;
+      });
+    }
+    await _saveData();
   }
 
   void _deletePlaylist(String name) {
@@ -454,18 +679,34 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _addPlaylistToQueue(String playlistName) {
+    debugPrint("播放清單被按囉!!!!!!!!!!!!!!!!!!");
     final paths = _playlists[playlistName];
     if (paths != null) {
       setState(() {
+        _playQueue.clear();
         for (var path in paths) {
           bool alreadyIn = _playQueue.any((s) {
             return s.path == path;
           });
           if (!alreadyIn) {
-            _playQueue.add(Song(path: path, duration: Duration.zero));
+            try {
+              final existingSong = _allSongs.firstWhere((s) => s.path == path);
+              _playQueue.add(existingSong);
+            } catch (e) {
+              // 如果總表找不到，才建立新的（這時才可能沒時間）
+              _playQueue.add(
+                Song(
+                  path: path,
+                  title: path.split('/').last,
+                  duration: Duration.zero,
+                ),
+              );
+            }
           }
         }
+        debugPrint("播放清單被按囉!!!!!!!!!!!!!!!!!!$_selectedIndex");
         _selectedIndex = 0; // 跳轉到佇列頁面
+        _pageController.jumpToPage(0);
       });
     }
     _saveData();
@@ -674,7 +915,7 @@ class _MainScreenState extends State<MainScreen> {
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: () {
-                _fileBrowserKey.currentState?._checkPermissionAndScan();
+                _checkPermissionAndScan();
               },
             ),
           },
@@ -743,6 +984,10 @@ class _MainScreenState extends State<MainScreen> {
                   }, // 傳入另存
                 ),
                 FileBrowserPage(
+                  allSongs: _allSongs, // 傳入主畫面的清單
+                  currentQueue: _playQueue,
+                  isScanning: _isScanning, // 傳入主畫面的掃描狀態
+                  onScan: _checkPermissionAndScan, // 傳入主畫面的掃描函數
                   key: _fileBrowserKey,
                   query: _searchController.text,
                   format: _formatDuration,
@@ -823,6 +1068,7 @@ class _MainScreenState extends State<MainScreen> {
                             ElevatedButton.icon(
                               onPressed: () {
                                 _fileBrowserKey.currentState?._performAdd();
+                                _pageController.jumpToPage(0);
                               },
                               icon: const Icon(Icons.queue_music),
                               label: const Text("加入佇列"),
@@ -885,64 +1131,77 @@ class _MainScreenState extends State<MainScreen> {
                         // 播放進度條
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                          child: Row(
-                            children: [
-                              // 左側：當前播放時間
-                              SizedBox(
-                                width: 42,
-                                child: Text(
-                                  _formatDuration(_position),
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ),
+                          child: StreamBuilder<Duration>(
+                            // [關鍵修正] 改為監聽 positionStream，這是 just_audio 內建會持續跳動的流
+                            stream: _audioHandler._player.positionStream,
+                            builder: (context, snapshot) {
+                              // 取得當前播放器的實際位置
+                              final position = snapshot.data ?? _position;
 
-                              // 中間：進度條，使用 Expanded 填滿空間
-                              Expanded(
-                                child: Slider(
-                                  activeColor: colorScheme.primary,
-                                  // [修改] 加上 clamp 限制，確保 value 永遠落在 0.0 與 max 之間
-                                  value: _position.inSeconds.toDouble().clamp(
-                                    0.0,
-                                    _duration.inSeconds.toDouble() > 0
-                                        ? _duration.inSeconds.toDouble()
-                                        : 0.0,
+                              // 只有在沒拖動時才更新全域 _position
+                              if (!_isDragging) {
+                                _position = position;
+                              }
+
+                              return Row(
+                                children: [
+                                  // 左側時間
+                                  SizedBox(
+                                    width: 42,
+                                    child: Text(
+                                      _formatDuration(_position),
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
                                   ),
-                                  min: 0.0,
-                                  // [修改] 確保 max 至少為 0.0，避免負數
-                                  max: _duration.inSeconds.toDouble() > 0
-                                      ? _duration.inSeconds.toDouble()
-                                      : 0.0,
-                                  onChangeStart: (value) {
-                                    _isDragging = true;
-                                  },
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _position = Duration(
-                                        seconds: value.toInt(),
-                                      );
-                                    });
-                                  },
-                                  onChangeEnd: (value) async {
-                                    await _audioPlayer.seek(
-                                      Duration(seconds: value.toInt()),
-                                    );
-                                    // [修改] 稍微延遲一點點再解鎖，確保播放器已經跳轉到新位置
-                                    await Future.delayed(
-                                      const Duration(milliseconds: 200),
-                                    );
-                                    _isDragging = false;
-                                  },
-                                ),
-                              ),
-                              // 右側：總時長
-                              SizedBox(
-                                width: 42,
-                                child: Text(
-                                  _formatDuration(_duration),
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ),
-                            ],
+
+                                  // 中間 Slider
+                                  Expanded(
+                                    child: Slider(
+                                      activeColor: colorScheme.primary,
+                                      value: _position.inSeconds
+                                          .toDouble()
+                                          .clamp(
+                                            0.0,
+                                            _duration.inSeconds.toDouble() > 0
+                                                ? _duration.inSeconds.toDouble()
+                                                : 0.0,
+                                          ),
+                                      min: 0.0,
+                                      max: _duration.inSeconds.toDouble() > 0
+                                          ? _duration.inSeconds.toDouble()
+                                          : 0.0,
+                                      onChangeStart: (value) =>
+                                          _isDragging = true,
+                                      onChanged: (value) {
+                                        setState(() {
+                                          _position = Duration(
+                                            seconds: value.toInt(),
+                                          );
+                                        });
+                                      },
+                                      onChangeEnd: (value) async {
+                                        await _audioHandler.seek(
+                                          Duration(seconds: value.toInt()),
+                                        );
+                                        await Future.delayed(
+                                          const Duration(milliseconds: 200),
+                                        );
+                                        _isDragging = false;
+                                      },
+                                    ),
+                                  ),
+
+                                  // 右側總時長
+                                  SizedBox(
+                                    width: 42,
+                                    child: Text(
+                                      _formatDuration(_duration),
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                         Row(
@@ -964,7 +1223,7 @@ class _MainScreenState extends State<MainScreen> {
                             // 上一首按鈕
                             IconButton(
                               icon: const Icon(Icons.skip_previous),
-                              onPressed: isBrowser ? null : _handlePrevious,
+                              onPressed: _handlePrevious,
                               iconSize: 40,
                             ),
                             // 播放/暫停 按鈕
@@ -978,16 +1237,16 @@ class _MainScreenState extends State<MainScreen> {
                               color: colorScheme.primary,
                               onPressed: () {
                                 if (_isPlaying) {
-                                  _audioPlayer.pause();
+                                  _audioHandler.pause();
                                 } else {
-                                  _audioPlayer.resume();
+                                  _audioHandler.play();
                                 }
                               },
                             ),
                             // 下一首按鈕
                             IconButton(
                               icon: const Icon(Icons.skip_next),
-                              onPressed: isBrowser ? null : _handleNext,
+                              onPressed: _handleNext,
                               iconSize: 40,
                             ),
                             // 播放模式按鈕
@@ -1005,24 +1264,36 @@ class _MainScreenState extends State<MainScreen> {
                                   _playMode = (_playMode + 1) % 3;
                                   switch (_playMode) {
                                     case 0:
+                                      _audioHandler._player.setLoopMode(
+                                        LoopMode.off,
+                                      );
                                       myToast(
                                         "播放模式：全部循環",
                                         durationSeconds: 1.5,
                                       );
                                       break;
                                     case 1:
+                                      _audioHandler._player.setLoopMode(
+                                        LoopMode.one,
+                                      );
                                       myToast(
                                         "播放模式：單曲循環",
                                         durationSeconds: 1.5,
                                       );
                                       break;
                                     case 2:
+                                      _audioHandler._player.setLoopMode(
+                                        LoopMode.off,
+                                      );
                                       myToast(
                                         "播放模式：隨機循環",
                                         durationSeconds: 1.5,
                                       );
                                       break;
                                     default:
+                                      _audioHandler._player.setLoopMode(
+                                        LoopMode.off,
+                                      );
                                       myToast(
                                         "播放模式：全部循環",
                                         durationSeconds: 1.5,
@@ -1174,7 +1445,6 @@ class QueuePage extends StatelessWidget {
               final s = filtered[idx];
               final itemKey = ValueKey("${s.path}_$idx");
               final bool isPlaying = (s.path == currentPath);
-              // Timer? dragTimer;
               // 1. 將 Listener 放在最外層，確保整個 ListTile 都能觸發計時器
               return ReorderableDelayedDragStartListener(
                 key: itemKey,
@@ -1200,7 +1470,7 @@ class QueuePage extends StatelessWidget {
                               )
                             : const Icon(Icons.menu),
                       ),
-                    ),
+                    ), //aaaaa
                     title: HighlightedText(
                       text: s.fileName,
                       query: query,
@@ -1215,6 +1485,7 @@ class QueuePage extends StatelessWidget {
                     ),
                     subtitle: Text(
                       format(s.duration),
+                      // s.songtime,
                       style: const TextStyle(fontSize: 10),
                     ),
                     trailing: IconButton(
@@ -1244,6 +1515,10 @@ class QueuePage extends StatelessWidget {
 
 // --- 2. 瀏覽頁面 ---
 class FileBrowserPage extends StatefulWidget {
+  final List<Song> allSongs; // 新增
+  final List<Song> currentQueue;
+  final bool isScanning; // 新增
+  final VoidCallback onScan; // 新增
   final String query;
   final String Function(Duration) format;
   final Set<String> favorites;
@@ -1254,6 +1529,10 @@ class FileBrowserPage extends StatefulWidget {
 
   const FileBrowserPage({
     super.key,
+    required this.allSongs,
+    required this.currentQueue,
+    required this.isScanning,
+    required this.onScan,
     required this.query,
     required this.format,
     required this.favorites,
@@ -1269,11 +1548,9 @@ class FileBrowserPage extends StatefulWidget {
 
 class _FileBrowserPageState extends State<FileBrowserPage>
     with AutomaticKeepAliveClientMixin {
-  final List<Song> _allSongs = []; // 欄位設為 final
   final Set<String> _selected = {};
   List<String> get selectedPaths => _selected.toList();
   bool _isMulti = false;
-  bool _isScanning = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -1287,64 +1564,33 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   }
 
   void _performAdd() {
-    final toAdd = _allSongs.where((s) {
-      return _selected.contains(s.path);
+    // 1. 找出被選中且「不在」目前佇列中的歌曲
+    final toAdd = widget.allSongs.where((s) {
+      bool isSelected = _selected.contains(s.path);
+      // 檢查路徑是否已經存在於佇列中
+      bool alreadyInQueue = widget.currentQueue.any(
+        (item) => item.path == s.path,
+      );
+      return isSelected && !alreadyInQueue;
     }).toList();
-    widget.onBatchAdd(toAdd);
-    _cancelSelection();
-  }
 
-  Future<void> _checkPermissionAndScan() async {
-    if (await Permission.audio.request().isGranted ||
-        await Permission.storage.request().isGranted) {
-      setState(() {
-        _isScanning = true;
-        _allSongs.clear();
-      });
-
-      final root = Directory('/storage/emulated/0');
-      try {
-        await for (var entity
-            in root.list(recursive: true, followLinks: false).handleError((e) {
-              // 靜默處理權限不足的目錄
-            })) {
-          if (entity is File &&
-              entity.path.toLowerCase().endsWith('.mp3') &&
-              !entity.path.contains('/Android/')) {
-            Duration d = Duration.zero;
-            try {
-              final tag = await AudioTags.read(
-                entity.path,
-              ).timeout(const Duration(milliseconds: 500));
-              if (tag != null && tag.duration != null) {
-                d = Duration(seconds: tag.duration!);
-              }
-            } catch (e) {
-              // 標籤讀取失敗時保留 Duration.zero
-            }
-
-            if (mounted) {
-              setState(() {
-                _allSongs.add(Song(path: entity.path, duration: d));
-              });
-            }
-          }
-        }
-      } catch (e) {
-        // 捕捉掃描中斷
-      }
-      if (mounted) {
-        setState(() {
-          _isScanning = false;
-        });
+    // 2. 根據過濾結果執行動作
+    if (toAdd.isNotEmpty) {
+      widget.onBatchAdd(toAdd);
+      myToast("已加入 ${toAdd.length} 首新歌曲");
+    } else {
+      if (_selected.isNotEmpty) {
+        myToast("選中的歌曲已全部在佇列中");
       }
     }
+
+    _cancelSelection();
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final filtered = _allSongs.where((s) {
+    final filtered = widget.allSongs.where((s) {
       return s.fileName.toLowerCase().contains(widget.query.toLowerCase());
     }).toList();
     final totalDuration = filtered.fold(Duration.zero, (p, s) {
@@ -1358,9 +1604,9 @@ class _FileBrowserPageState extends State<FileBrowserPage>
           // 如果未來想在這裡加按鈕（例如全選），可以放在 trailing 參數
         ),
         // 如果正在掃描，顯示進度條
-        if (_isScanning) const LinearProgressIndicator(),
+        if (widget.isScanning) const LinearProgressIndicator(),
         Expanded(
-          child: _allSongs.isEmpty && !_isScanning
+          child: widget.allSongs.isEmpty && !widget.isScanning
               ? const Center(
                   child: Text(
                     "找不到音樂檔案(.mp3)",
@@ -1439,7 +1685,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
   }
 
   void _notify() {
-    final selectedSongs = _allSongs.where((s) {
+    final selectedSongs = widget.allSongs.where((s) {
       return _selected.contains(s.path);
     });
     final total = selectedSongs.fold(Duration.zero, (p, s) {
