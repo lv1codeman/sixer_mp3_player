@@ -12,6 +12,25 @@ void main() {
   runApp(const SixerMP3Player());
 }
 
+Widget _buildSubHeader({required String text, Widget? trailing}) {
+  return ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: 48),
+    child: Container(
+      width: double.infinity,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      color: Colors.black12,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(text, style: const TextStyle(fontSize: 12)),
+          if (trailing != null) trailing,
+        ],
+      ),
+    ),
+  );
+}
+
 // --- 歌曲資料模型 ---
 class Song {
   final String path;
@@ -219,6 +238,16 @@ class _MainScreenState extends State<MainScreen> {
     } catch (e) {
       debugPrint("播放失敗: $e");
     }
+  }
+
+  void _clearQueue() {
+    setState(() {
+      _playQueue.clear();
+      // 這裡可以選擇是否要同時停止播放，如果要停止則加上：
+      _audioPlayer.stop();
+      _currentPath = "";
+      _currentTitle = "未在播放";
+    });
   }
 
   void _deletePlaylist(String name) {
@@ -467,6 +496,7 @@ class _MainScreenState extends State<MainScreen> {
                   query: _searchController.text,
                   format: _formatDuration,
                   onPlay: _handlePlay,
+                  onClear: _clearQueue,
                 ),
                 FileBrowserPage(
                   key: _fileBrowserKey,
@@ -710,6 +740,7 @@ class QueuePage extends StatelessWidget {
   final String query;
   final String Function(Duration) format;
   final Function(String) onPlay;
+  final VoidCallback onClear;
 
   const QueuePage({
     super.key,
@@ -718,6 +749,7 @@ class QueuePage extends StatelessWidget {
     required this.query,
     required this.format,
     required this.onPlay,
+    required this.onClear,
   });
 
   @override
@@ -731,15 +763,27 @@ class QueuePage extends StatelessWidget {
 
     return Column(
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(8),
-          color: Colors.black12,
-          child: Text(
-            "佇列：${filtered.length} 首 (${format(totalDuration)})",
-            style: const TextStyle(fontSize: 12),
-          ),
+        _buildSubHeader(
+          text: "佇列：${filtered.length} 首 (${format(totalDuration)})",
+          trailing: filtered.isNotEmpty
+              ? TextButton.icon(
+                  onPressed: onClear,
+                  icon: const Icon(
+                    Icons.delete_sweep,
+                    size: 18,
+                    color: Colors.redAccent,
+                  ),
+                  label: const Text(
+                    "清空",
+                    style: TextStyle(fontSize: 12, color: Colors.redAccent),
+                  ),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                )
+              : null,
         ),
+
         Expanded(
           child: ListView.builder(
             itemCount: filtered.length,
@@ -869,16 +913,12 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
 
     return Column(
       children: [
-        if (_isScanning) ...{const LinearProgressIndicator()},
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(8),
-          color: Colors.black12,
-          child: Text(
-            "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
-            style: const TextStyle(fontSize: 12),
-          ),
+        _buildSubHeader(
+          text: "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
+          // 如果未來想在這裡加按鈕（例如全選），可以放在 trailing 參數
         ),
+        // 如果正在掃描，顯示進度條
+        if (_isScanning) const LinearProgressIndicator(),
         Expanded(
           child: _allSongs.isEmpty && !_isScanning
               ? Center(
@@ -994,15 +1034,7 @@ class FavoritePage extends StatelessWidget {
 
     return Column(
       children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(8),
-          color: Colors.black12,
-          child: Text(
-            "收藏：${list.length} 首",
-            style: const TextStyle(fontSize: 12),
-          ),
-        ),
+        _buildSubHeader(text: "收藏歌曲：${list.length} 首"),
         Expanded(
           child: ListView.builder(
             itemCount: list.length,
@@ -1057,19 +1089,10 @@ class PlaylistPage extends StatelessWidget {
     return Column(
       children: [
         // 加入一個簡單的數量統計（與其他頁面風格一致）
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(8),
-          color: Colors.black12,
-          child: (query == '')
-              ? Text(
-                  "現有清單：${names.length} 個",
-                  style: const TextStyle(fontSize: 12),
-                )
-              : Text(
-                  "符合條件的清單：${names.length} 個",
-                  style: const TextStyle(fontSize: 12),
-                ),
+        _buildSubHeader(
+          text: (query == '')
+              ? "現有清單：${names.length} 個"
+              : "符合條件的清單：${names.length} 個",
         ),
         Expanded(
           child: ListView.builder(
