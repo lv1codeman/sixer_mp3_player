@@ -175,7 +175,6 @@ class _MainScreenState extends State<MainScreen> {
   String _selectedTotalTime = "00:00";
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
-  final Set<String> _selectedFiles = {};
 
   @override
   void initState() {
