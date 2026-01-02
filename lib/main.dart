@@ -10,12 +10,21 @@ class SixerMP3Player extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sixer MP3 Player',
+      title: 'Sixer MP3 Player2',
+      // 設定淺色主題
       theme: ThemeData(
         useMaterial3: true,
         colorSchemeSeed: Colors.deepPurple,
-        brightness: Brightness.light, // T2-1 預計會改這裡
+        brightness: Brightness.light,
       ),
+      // T2-1: 設定深色主題
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.deepPurple,
+        brightness: Brightness.dark,
+      ),
+      // 根據手機系統設定自動切換深淺色
+      themeMode: ThemeMode.system,
       home: const MainScreen(),
     );
   }
@@ -29,50 +38,122 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _selectedIndex = 1; // 預設直接開到第二頁「檔案總管」方便測試
+  int _selectedIndex = 1; // 預設停在檔案總管分頁
+  bool _isDarkMode = false;
 
-  // 這裡就是你剛才找的 _pages 區塊
   final List<Widget> _pages = [
     const Center(child: Text("第一頁：播放佇列 (待實作)")),
-    const FileBrowserPage(), // 實作 P-1 的核心頁面
+    const FileBrowserPage(), // P-1 實作內容
     const Center(child: Text("第三頁：播放清單 (待實作)")),
   ];
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Sixer MP3 Player'), centerTitle: true),
-      body: Column(
-        children: [
-          Expanded(
-            child: IndexedStack(index: _selectedIndex, children: _pages),
-          ),
-          const Divider(height: 1),
-          // 底部播放器佔位
-          Container(
-            height: 80,
-            color: Colors.deepPurple.withOpacity(0.1),
-            child: const Center(child: Text("播放控制欄 (待實作)")),
-          ),
-        ],
+    final colorScheme = Theme.of(context).colorScheme;
+    return Theme(
+      // 根據 _isDarkMode 決定局部主題
+      data: ThemeData(
+        useMaterial3: true,
+        colorSchemeSeed: Colors.deepPurple,
+        brightness: _isDarkMode ? Brightness.dark : Brightness.light,
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.queue_music), label: '播放佇列'),
-          BottomNavigationBarItem(icon: Icon(Icons.folder_open), label: '檔案總管'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.playlist_play),
-            label: '播放清單',
-          ),
-        ],
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Sixer MP3 Player'),
+          centerTitle: true,
+          // 這是你找的切換 Icon 按鈕！
+          actions: [
+            IconButton(
+              icon: Icon(_isDarkMode ? Icons.light_mode : Icons.dark_mode),
+              onPressed: () => setState(() => _isDarkMode = !_isDarkMode),
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              child: IndexedStack(
+                index: _selectedIndex,
+                // 注意：這裡要把 _pages 移到 build 裡面，
+                // 這樣切換主題時，子頁面才會跟著重繪顏色
+                children: [
+                  const Center(child: Text("第一頁：播放佇列 (待實作)")),
+                  const FileBrowserPage(),
+                  const Center(child: Text("第三頁：播放清單 (待實作)")),
+                ],
+              ),
+            ),
+
+            const Divider(height: 1),
+            Container(
+              height: 80,
+              // 使用 Theme.of(context) 確保顏色同步
+              color: _isDarkMode
+                  ? Colors.black26
+                  : Colors.deepPurple.withValues(alpha: 0.1),
+              child: const Center(child: Text("播放控制欄 (待實作)")),
+            ),
+            // --- 指示條 (Indicator Bar) ---
+            Stack(
+              children: [
+                // 底色條
+                Container(
+                  height: 4,
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.3,
+                  ),
+                ),
+                // 動態移動的指示塊
+                AnimatedAlign(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeInOut,
+                  // 這裡計算對齊位置：-1.0 是最左，0.0 是中間，1.0 是最右
+                  alignment: Alignment(
+                    _selectedIndex == 0
+                        ? -1.0
+                        : (_selectedIndex == 1 ? 0.0 : 1.0),
+                    0,
+                  ),
+                  child: FractionallySizedBox(
+                    widthFactor: 1 / 3, // 三個分頁，寬度佔三分之一
+                    child: Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _selectedIndex,
+          onTap: (index) => setState(() => _selectedIndex = index),
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.queue_music),
+              label: '播放佇列',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.folder_open),
+              label: '檔案總管',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.playlist_play),
+              label: '播放清單',
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// --- P-1 檔案總管實作頁面 ---
+// --- P-1 檔案總管實作頁面 (包含 T2-1 配色優化) ---
 
 class FileBrowserPage extends StatefulWidget {
   const FileBrowserPage({super.key});
@@ -91,54 +172,47 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
     _checkPermissionAndScan();
   }
 
-  // 檢查權限
+  // 1. 請求權限 (針對 Android 13+ 的 POCO F8 Ultra 優化)
   Future<void> _checkPermissionAndScan() async {
-    // 針對 Android 13+ (你的 POCO F8 Ultra 應該是這之後的版本)
     var status = await Permission.audio.request();
-
     if (status.isGranted) {
-      _startScan();
+      _startSafeScan();
     } else {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("請授予音訊存取權限以掃描音樂")));
+        ).showSnackBar(const SnackBar(content: Text("請在系統設定中授予音訊存取權限")));
       }
     }
   }
 
-  // 掃描目錄 (P-1 核心邏輯)
-  Future<void> _startScan() async {
+  // 2. 安全掃描邏輯：跳過受保護的 Android/data 等資料夾
+  Future<void> _startSafeScan() async {
     setState(() => _isScanning = true);
 
     final rootDir = Directory('/storage/emulated/0');
     List<FileSystemEntity> foundFiles = [];
 
-    // 我們建立一個內部函數來進行安全遞迴
     Future<void> safeScan(Directory dir) async {
       try {
-        // 取得當前目錄下的所有項目（不直接使用 recursive: true）
         final entities = dir.listSync(recursive: false);
-
         for (var entity in entities) {
           if (entity is File) {
             String path = entity.path.toLowerCase();
+            // 過濾副檔名
             if (path.endsWith('.mp3') ||
                 path.endsWith('.m4a') ||
                 path.endsWith('.wav')) {
               foundFiles.add(entity);
             }
           } else if (entity is Directory) {
-            // 跳過 Android 資料夾以避免權限錯誤
-            if (entity.path.endsWith('/Android')) continue;
-
-            // 遞迴掃描子資料夾
+            // 關鍵：跳過會導致 Permission Denied 的系統目錄
+            if (entity.path.contains('/Android')) continue;
             await safeScan(entity);
           }
         }
       } catch (e) {
-        // 遇到權限拒絕的資料夾就跳過，不中斷程式
-        debugPrint("跳過無法存取的資料夾: ${dir.path}");
+        debugPrint("跳過無法存取的目錄: ${dir.path}");
       }
     }
 
@@ -154,10 +228,21 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 取得當前主題配色方案 (T2-1)
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Column(
       children: [
+        // 頂部狀態欄
         ListTile(
-          title: Text("找到 ${_musicFiles.length} 首歌曲"),
+          tileColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          title: Text(
+            "找到 ${_musicFiles.length} 首歌曲",
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: colorScheme.primary,
+            ),
+          ),
           trailing: _isScanning
               ? const SizedBox(
                   width: 20,
@@ -165,35 +250,44 @@ class _FileBrowserPageState extends State<FileBrowserPage> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : IconButton(
-                  icon: const Icon(Icons.refresh),
+                  icon: Icon(Icons.refresh, color: colorScheme.primary),
                   onPressed: _checkPermissionAndScan,
                 ),
         ),
         const Divider(height: 1),
+        // 音樂檔案列表
         Expanded(
           child: _musicFiles.isEmpty && !_isScanning
-              ? const Center(child: Text("沒找到音樂檔案，請確認手機內是否有 MP3"))
+              ? const Center(child: Text("沒找到音樂檔案，請確認手機 Download 資料夾是否有 MP3"))
               : ListView.builder(
                   itemCount: _musicFiles.length,
                   itemBuilder: (context, index) {
                     final file = _musicFiles[index];
                     final fileName = file.path.split('/').last;
                     return ListTile(
-                      leading: const Icon(
-                        Icons.music_note,
-                        color: Colors.deepPurple,
+                      leading: CircleAvatar(
+                        backgroundColor: colorScheme.primaryContainer,
+                        child: Icon(
+                          Icons.music_note,
+                          color: colorScheme.onPrimaryContainer,
+                        ),
                       ),
                       title: Text(
                         fileName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: colorScheme.onSurface),
                       ),
                       subtitle: Text(
                         file.path,
-                        style: const TextStyle(fontSize: 10),
+                        style: TextStyle(
+                          fontSize: 10,
+                          // T2-1: 自動切換半透明感的文字顏色
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                       onTap: () {
-                        // 未來在這裡實作點擊播放
+                        // TODO: 實作加入播放佇列邏輯
                       },
                     );
                   },
