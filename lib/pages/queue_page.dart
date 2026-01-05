@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../widgets/sub_header.dart';
-import '../widgets/highlights_text.dart';
+import '../widgets/highlighted_text.dart';
 
 class QueuePage extends StatelessWidget {
   final List<Song> queue;
@@ -11,7 +11,7 @@ class QueuePage extends StatelessWidget {
   final Function(String) onPlay;
   final VoidCallback onClear; // 你原本對應 _clearQueue
   final Function(int, int) onReorder;
-  final Function(int) onDelete; // 你原本用 onDelete
+  final Function(int) onDelete;
   final VoidCallback onSaveAsPlaylist;
 
   const QueuePage({

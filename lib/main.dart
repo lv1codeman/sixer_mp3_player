@@ -10,135 +10,18 @@ import 'package:audio_service/audio_service.dart';
 
 // 程式碼分區管理
 import 'models/song.dart';
-import 'utils.dart';
-import 'widgets/sub_header.dart';
-import 'widgets/highlights_text.dart';
+import 'utils/utils.dart';
+// import 'widgets/sub_header.dart';
+// import 'widgets/highlighted_text.dart';
 
 import 'pages/queue_page.dart';
+import 'pages/file_browser_page.dart';
+import 'pages/favorite_page.dart';
+import 'pages/playlist_page.dart';
+import 'services/audio_handler.dart';
 
 // 建立全域的 AudioHandler 實例
 late MyAudioHandler _audioHandler;
-
-class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
-  final _player = AudioPlayer(); // 這是 just_audio 的播放器
-  VoidCallback? onComplete;
-  VoidCallback? onSkipNext;
-  VoidCallback? onSkipPrevious;
-
-  MyAudioHandler() {
-    // 監聽播放狀態並傳遞給系統通知列
-    // _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
-    _player.playbackEventStream.map(_transformEvent).listen((state) {
-      // 檢查是否已被關閉，避免 Bad state
-      if (!playbackState.isClosed) {
-        playbackState.add(state);
-      }
-    });
-    _player.processingStateStream.listen((state) {
-      if (state == ProcessingState.completed) {
-        final position = _player.position;
-        final duration = _player.duration ?? Duration.zero;
-        if (position.inSeconds > 0 &&
-            (duration.inSeconds - position.inSeconds).abs() < 2) {
-          debugPrint("歌曲播放完畢，跳下一首");
-          skipToNext();
-        } else {
-          debugPrint("偵測到異常完成狀態，停止播放避免連跳。Pos: $position, Dur: $duration");
-          _player.stop();
-        }
-      }
-    });
-  }
-  Future<void> setLoopMode(LoopMode mode) => _player.setLoopMode(mode);
-  @override
-  Future<void> skipToNext() async {
-    // 執行 UI 傳進來的下一首邏輯 (處理隨機或順序)
-    onSkipNext?.call();
-  }
-
-  @override
-  Future<void> skipToPrevious() async {
-    if (onSkipPrevious != null) {
-      onSkipPrevious!();
-    }
-  }
-
-  @override
-  Future<void> play() => _player.play();
-
-  @override
-  Future<void> pause() => _player.pause();
-
-  @override
-  Future<void> seek(Duration position) => _player.seek(position);
-
-  @override
-  Future<void> stop() async {
-    await _player.stop();
-    // 清除當前媒體資訊，防止 UI 繼續接收舊數據
-    // mediaItem.add(null);
-    await super.stop();
-  }
-
-  // 處理播放路徑與通知列資訊
-  Future<void> playPath(String path) async {
-    try {
-      await _player.stop();
-
-      // 解決 BAD_INDEX 的關鍵：增加極短的延遲，讓系統回收 c2.android.mp3.decoder
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      // 使用 setFilePath 載入
-      final duration = await _player.setFilePath(path);
-
-      mediaItem.add(
-        MediaItem(
-          id: path,
-          album: "SixerMP3",
-          title: path.split('/').last,
-          duration: duration,
-        ),
-      );
-
-      _player.play();
-      playbackState.add(_transformEvent(_player.playbackEvent));
-    } catch (e) {
-      debugPrint("Handler playPath Error: $e");
-      // _isSwitchingTrack = false;
-      // Future.delayed(const Duration(milliseconds: 500), () {
-      // onSkipNext?.call();
-      // });
-    }
-  }
-
-  // 將 just_audio 的狀態轉換為系統通知列格式
-  PlaybackState _transformEvent(PlaybackEvent event) {
-    return PlaybackState(
-      controls: [
-        MediaControl.skipToPrevious,
-        if (_player.playing) MediaControl.pause else MediaControl.play,
-        MediaControl.stop,
-        MediaControl.skipToNext,
-      ],
-      systemActions: const {MediaAction.seek},
-      androidCompactActionIndices: const [0, 1, 3],
-      processingState:
-          const {
-            ProcessingState.idle: AudioProcessingState.idle,
-            ProcessingState.loading: AudioProcessingState.loading,
-            ProcessingState.buffering: AudioProcessingState.buffering,
-            ProcessingState.ready: AudioProcessingState.ready,
-            ProcessingState.completed: AudioProcessingState.completed,
-          }[_player.processingState] ??
-          AudioProcessingState.idle,
-      playing: _player.playing,
-      updatePosition: _player.position,
-      updateTime: DateTime.now(),
-      bufferedPosition: _player.bufferedPosition,
-      speed: _player.speed,
-    );
-  }
-}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -213,7 +96,7 @@ class _MainScreenState extends State<MainScreen>
   late PageController _pageController;
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
-  final GlobalKey<_FileBrowserPageState> _fileBrowserKey = GlobalKey();
+  final GlobalKey<FileBrowserPageState> _fileBrowserKey = GlobalKey();
 
   final List<Song> _playQueue = [];
   final List<Song> _allSongs = []; // 歌曲總表搬到這裡
@@ -359,7 +242,7 @@ class _MainScreenState extends State<MainScreen>
 
   void _onBottomNavTapped(int index) {
     if (_isMultiSelectMode) {
-      _fileBrowserKey.currentState?._cancelSelection();
+      _fileBrowserKey.currentState?.cancelSelection();
     }
     setState(() {
       _selectedIndex = index;
@@ -877,7 +760,7 @@ class _MainScreenState extends State<MainScreen>
                             // 1. 加入佇列
                             ElevatedButton.icon(
                               onPressed: () {
-                                _fileBrowserKey.currentState?._performAdd();
+                                _fileBrowserKey.currentState?.performAdd();
                                 _pageController.jumpToPage(0);
                               },
                               icon: const Icon(Icons.queue_music),
@@ -905,8 +788,7 @@ class _MainScreenState extends State<MainScreen>
                             // 3. 取消按鈕
                             TextButton.icon(
                               onPressed: () {
-                                _fileBrowserKey.currentState
-                                    ?._cancelSelection();
+                                _fileBrowserKey.currentState?.cancelSelection();
                               },
                               icon: const Icon(Icons.close),
                               label: const Text("取消"),
@@ -943,7 +825,7 @@ class _MainScreenState extends State<MainScreen>
                           padding: const EdgeInsets.symmetric(horizontal: 2.0),
                           child: StreamBuilder<Duration>(
                             // [關鍵修正] 改為監聽 positionStream，這是 just_audio 內建會持續跳動的流
-                            stream: _audioHandler._player.positionStream,
+                            stream: _audioHandler.positionStream,
                             builder: (context, snapshot) {
                               // 取得當前播放器的實際位置
                               final position = snapshot.data ?? _position;
@@ -1074,36 +956,28 @@ class _MainScreenState extends State<MainScreen>
                                   _playMode = (_playMode + 1) % 3;
                                   switch (_playMode) {
                                     case 0:
-                                      _audioHandler._player.setLoopMode(
-                                        LoopMode.off,
-                                      );
+                                      _audioHandler.setLoopMode(LoopMode.off);
                                       myToast(
                                         "播放模式：全部循環",
                                         durationSeconds: 1.5,
                                       );
                                       break;
                                     case 1:
-                                      _audioHandler._player.setLoopMode(
-                                        LoopMode.one,
-                                      );
+                                      _audioHandler.setLoopMode(LoopMode.one);
                                       myToast(
                                         "播放模式：單曲循環",
                                         durationSeconds: 1.5,
                                       );
                                       break;
                                     case 2:
-                                      _audioHandler._player.setLoopMode(
-                                        LoopMode.off,
-                                      );
+                                      _audioHandler.setLoopMode(LoopMode.off);
                                       myToast(
                                         "播放模式：隨機循環",
                                         durationSeconds: 1.5,
                                       );
                                       break;
                                     default:
-                                      _audioHandler._player.setLoopMode(
-                                        LoopMode.off,
-                                      );
+                                      _audioHandler.setLoopMode(LoopMode.off);
                                       myToast(
                                         "播放模式：全部循環",
                                         durationSeconds: 1.5,
@@ -1160,6 +1034,8 @@ class _MainScreenState extends State<MainScreen>
   }
 }
 
+/// 已搬移的功能
+/** 
 // --- 1. 佇列頁面 ---
 // class QueuePage extends StatelessWidget {
 //   final List<Song> queue;
@@ -1323,311 +1199,184 @@ class _MainScreenState extends State<MainScreen>
 // }
 
 // --- 2. 瀏覽頁面 ---
-class FileBrowserPage extends StatefulWidget {
-  final List<Song> allSongs; // 新增
-  final List<Song> currentQueue;
-  final bool isScanning; // 新增
-  final VoidCallback onScan; // 新增
-  final String query;
-  final String Function(Duration) format;
-  final Set<String> favorites;
-  final Function(String) onPlay;
-  final Function(String) onToggleFav;
-  final Function(List<Song>) onBatchAdd;
-  final Function(bool, int, String) onSelectionChanged;
+// class FileBrowserPage extends StatefulWidget {
+//   final List<Song> allSongs; // 新增
+//   final List<Song> currentQueue;
+//   final bool isScanning; // 新增
+//   final VoidCallback onScan; // 新增
+//   final String query;
+//   final String Function(Duration) format;
+//   final Set<String> favorites;
+//   final Function(String) onPlay;
+//   final Function(String) onToggleFav;
+//   final Function(List<Song>) onBatchAdd;
+//   final Function(bool, int, String) onSelectionChanged;
 
-  const FileBrowserPage({
-    super.key,
-    required this.allSongs,
-    required this.currentQueue,
-    required this.isScanning,
-    required this.onScan,
-    required this.query,
-    required this.format,
-    required this.favorites,
-    required this.onPlay,
-    required this.onToggleFav,
-    required this.onBatchAdd,
-    required this.onSelectionChanged,
-  });
+//   const FileBrowserPage({
+//     super.key,
+//     required this.allSongs,
+//     required this.currentQueue,
+//     required this.isScanning,
+//     required this.onScan,
+//     required this.query,
+//     required this.format,
+//     required this.favorites,
+//     required this.onPlay,
+//     required this.onToggleFav,
+//     required this.onBatchAdd,
+//     required this.onSelectionChanged,
+//   });
 
-  @override
-  State<FileBrowserPage> createState() => _FileBrowserPageState();
-}
+//   @override
+//   State<FileBrowserPage> createState() => _FileBrowserPageState();
+// }
 
-class _FileBrowserPageState extends State<FileBrowserPage>
-    with AutomaticKeepAliveClientMixin {
-  final Set<String> _selected = {};
-  List<String> get selectedPaths => _selected.toList();
-  bool _isMulti = false;
+// class _FileBrowserPageState extends State<FileBrowserPage>
+//     with AutomaticKeepAliveClientMixin {
+//   final Set<String> _selected = {};
+//   List<String> get selectedPaths => _selected.toList();
+//   bool _isMulti = false;
 
-  @override
-  bool get wantKeepAlive => true;
+//   @override
+//   bool get wantKeepAlive => true;
 
-  void _cancelSelection() {
-    setState(() {
-      _isMulti = false;
-      _selected.clear();
-    });
-    widget.onSelectionChanged(false, 0, "00:00");
-  }
+//   void _cancelSelection() {
+//     setState(() {
+//       _isMulti = false;
+//       _selected.clear();
+//     });
+//     widget.onSelectionChanged(false, 0, "00:00");
+//   }
 
-  void _performAdd() {
-    // 1. 找出被選中且「不在」目前佇列中的歌曲
-    final toAdd = widget.allSongs.where((s) {
-      bool isSelected = _selected.contains(s.path);
-      // 檢查路徑是否已經存在於佇列中
-      bool alreadyInQueue = widget.currentQueue.any(
-        (item) => item.path == s.path,
-      );
-      return isSelected && !alreadyInQueue;
-    }).toList();
+//   void _performAdd() {
+//     // 1. 找出被選中且「不在」目前佇列中的歌曲
+//     final toAdd = widget.allSongs.where((s) {
+//       bool isSelected = _selected.contains(s.path);
+//       // 檢查路徑是否已經存在於佇列中
+//       bool alreadyInQueue = widget.currentQueue.any(
+//         (item) => item.path == s.path,
+//       );
+//       return isSelected && !alreadyInQueue;
+//     }).toList();
 
-    // 2. 根據過濾結果執行動作
-    if (toAdd.isNotEmpty) {
-      widget.onBatchAdd(toAdd);
-      myToast("已加入 ${toAdd.length} 首新歌曲");
-    } else {
-      if (_selected.isNotEmpty) {
-        myToast("選中的歌曲已全部在佇列中");
-      }
-    }
+//     // 2. 根據過濾結果執行動作
+//     if (toAdd.isNotEmpty) {
+//       widget.onBatchAdd(toAdd);
+//       myToast("已加入 ${toAdd.length} 首新歌曲");
+//     } else {
+//       if (_selected.isNotEmpty) {
+//         myToast("選中的歌曲已全部在佇列中");
+//       }
+//     }
 
-    _cancelSelection();
-  }
+//     _cancelSelection();
+//   }
 
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    final filtered = widget.allSongs.where((s) {
-      return s.fileName.toLowerCase().contains(widget.query.toLowerCase());
-    }).toList();
-    final totalDuration = filtered.fold(Duration.zero, (p, s) {
-      return p + s.duration;
-    });
+//   @override
+//   Widget build(BuildContext context) {
+//     super.build(context);
+//     final filtered = widget.allSongs.where((s) {
+//       return s.fileName.toLowerCase().contains(widget.query.toLowerCase());
+//     }).toList();
+//     final totalDuration = filtered.fold(Duration.zero, (p, s) {
+//       return p + s.duration;
+//     });
 
-    return Column(
-      children: [
-        SubHeader(
-          text: "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
-          // 如果未來想在這裡加按鈕（例如全選），可以放在 trailing 參數
-        ),
-        // 如果正在掃描，顯示進度條
-        if (widget.isScanning) const LinearProgressIndicator(),
-        Expanded(
-          child: widget.allSongs.isEmpty && !widget.isScanning
-              ? const Center(
-                  child: Text(
-                    "找不到音樂檔案(.mp3)",
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: filtered.length,
-                  itemBuilder: (ctx, idx) {
-                    final s = filtered[idx];
-                    bool isChecked = _selected.contains(s.path);
-                    bool isFav = widget.favorites.contains(s.path);
+//     return Column(
+//       children: [
+//         SubHeader(
+//           text: "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
+//           // 如果未來想在這裡加按鈕（例如全選），可以放在 trailing 參數
+//         ),
+//         // 如果正在掃描，顯示進度條
+//         if (widget.isScanning) const LinearProgressIndicator(),
+//         Expanded(
+//           child: widget.allSongs.isEmpty && !widget.isScanning
+//               ? const Center(
+//                   child: Text(
+//                     "找不到音樂檔案(.mp3)",
+//                     style: TextStyle(color: Colors.grey),
+//                   ),
+//                 )
+//               : ListView.builder(
+//                   itemCount: filtered.length,
+//                   itemBuilder: (ctx, idx) {
+//                     final s = filtered[idx];
+//                     bool isChecked = _selected.contains(s.path);
+//                     bool isFav = widget.favorites.contains(s.path);
 
-                    return ListTile(
-                      leading: _isMulti
-                          ? Checkbox(
-                              value: isChecked,
-                              onChanged: (v) {
-                                setState(() {
-                                  if (v!) {
-                                    _selected.add(s.path);
-                                  } else {
-                                    _selected.remove(s.path);
-                                  }
-                                });
-                                _notify();
-                              },
-                            )
-                          : const Icon(Icons.music_note),
-                      title: HighlightedText(
-                        text: s.fileName,
-                        query: widget.query,
-                      ),
-                      subtitle: Text(
-                        widget.format(s.duration),
-                        style: const TextStyle(fontSize: 10),
-                      ),
-                      trailing: _isMulti
-                          ? null
-                          : IconButton(
-                              icon: Icon(
-                                isFav ? Icons.favorite : Icons.favorite_border,
-                                color: Colors.red,
-                              ),
-                              onPressed: () {
-                                widget.onToggleFav(s.path);
-                              },
-                            ),
-                      onLongPress: () {
-                        setState(() {
-                          _isMulti = true;
-                          _selected.add(s.path);
-                        });
-                        _notify();
-                      },
-                      onTap: () {
-                        if (_isMulti) {
-                          setState(() {
-                            if (isChecked) {
-                              _selected.remove(s.path);
-                            } else {
-                              _selected.add(s.path);
-                            }
-                          });
-                          _notify();
-                        } else {
-                          widget.onPlay(s.path);
-                        }
-                      },
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
+//                     return ListTile(
+//                       leading: _isMulti
+//                           ? Checkbox(
+//                               value: isChecked,
+//                               onChanged: (v) {
+//                                 setState(() {
+//                                   if (v!) {
+//                                     _selected.add(s.path);
+//                                   } else {
+//                                     _selected.remove(s.path);
+//                                   }
+//                                 });
+//                                 _notify();
+//                               },
+//                             )
+//                           : const Icon(Icons.music_note),
+//                       title: HighlightedText(
+//                         text: s.fileName,
+//                         query: widget.query,
+//                       ),
+//                       subtitle: Text(
+//                         widget.format(s.duration),
+//                         style: const TextStyle(fontSize: 10),
+//                       ),
+//                       trailing: _isMulti
+//                           ? null
+//                           : IconButton(
+//                               icon: Icon(
+//                                 isFav ? Icons.favorite : Icons.favorite_border,
+//                                 color: Colors.red,
+//                               ),
+//                               onPressed: () {
+//                                 widget.onToggleFav(s.path);
+//                               },
+//                             ),
+//                       onLongPress: () {
+//                         setState(() {
+//                           _isMulti = true;
+//                           _selected.add(s.path);
+//                         });
+//                         _notify();
+//                       },
+//                       onTap: () {
+//                         if (_isMulti) {
+//                           setState(() {
+//                             if (isChecked) {
+//                               _selected.remove(s.path);
+//                             } else {
+//                               _selected.add(s.path);
+//                             }
+//                           });
+//                           _notify();
+//                         } else {
+//                           widget.onPlay(s.path);
+//                         }
+//                       },
+//                     );
+//                   },
+//                 ),
+//         ),
+//       ],
+//     );
+//   }
 
-  void _notify() {
-    final selectedSongs = widget.allSongs.where((s) {
-      return _selected.contains(s.path);
-    });
-    final total = selectedSongs.fold(Duration.zero, (p, s) {
-      return p + s.duration;
-    });
-    widget.onSelectionChanged(_isMulti, _selected.length, widget.format(total));
-  }
-}
-
-// --- 3. 收藏頁面 ---
-class FavoritePage extends StatelessWidget {
-  final Set<String> favorites;
-  final String query;
-  final String Function(Duration) format;
-  final Function(String) onPlay;
-  final Function(String) onToggle;
-
-  const FavoritePage({
-    super.key,
-    required this.favorites,
-    required this.query,
-    required this.format,
-    required this.onPlay,
-    required this.onToggle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final list = favorites.where((p) {
-      return p.split('/').last.toLowerCase().contains(query.toLowerCase());
-    }).toList();
-
-    return Column(
-      children: [
-        SubHeader(text: "收藏歌曲：${list.length} 首"),
-        Expanded(
-          child: ListView.builder(
-            itemCount: list.length,
-            itemBuilder: (ctx, idx) {
-              final path = list[idx];
-              return ListTile(
-                leading: const Icon(Icons.favorite, color: Colors.red),
-                title: HighlightedText(
-                  text: path.split('/').last,
-                  query: query,
-                ),
-                onTap: () {
-                  onPlay(path);
-                },
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () {
-                    myConfirmDialog(
-                      title: "取消收藏",
-                      content: "確定要將「${path.split('/').last}」從收藏中移除嗎？",
-                      onConfirm: () {
-                        onToggle(path);
-                        // 執行原本的刪除邏輯
-                        myToast("已移除收藏", durationSeconds: 1.0);
-                      },
-                    );
-                  },
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// --- 4. 清單頁面 ---
-class PlaylistPage extends StatelessWidget {
-  final Map<String, List<String>> playlists;
-  final String query;
-  final Function(String) onPlaylistTap;
-  final Function(String) onDeletePlaylist;
-
-  const PlaylistPage({
-    super.key,
-    required this.playlists,
-    required this.query,
-    required this.onPlaylistTap,
-    required this.onDeletePlaylist,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // 3. 根據 query 過濾清單名稱
-    final names = playlists.keys.where((name) {
-      return name.toLowerCase().contains(query.toLowerCase());
-    }).toList();
-
-    return Column(
-      children: [
-        // 加入一個簡單的數量統計（與其他頁面風格一致）
-        SubHeader(
-          text: (query == '')
-              ? "現有清單：${names.length} 個"
-              : "符合條件的清單：${names.length} 個",
-        ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: names.length,
-            itemBuilder: (ctx, idx) {
-              final name = names[idx];
-              return ListTile(
-                leading: const Icon(Icons.playlist_play),
-                // 4. 使用之前定義的 HighlightedText 讓搜尋結果更直觀
-                title: HighlightedText(text: name, query: query),
-                subtitle: Text("共 ${playlists[name]!.length} 首歌曲"),
-                onTap: () {
-                  onPlaylistTap(name);
-                },
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () {
-                    myConfirmDialog(
-                      title: "刪除播放清單",
-                      content: "確定要刪除播放清單「$name」嗎？這動作無法復原。",
-                      onConfirm: () {
-                        onDeletePlaylist(name);
-                        myToast("播放清單「$name」已刪除", durationSeconds: 1.5);
-                      },
-                    );
-                  },
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
+//   void _notify() {
+//     final selectedSongs = widget.allSongs.where((s) {
+//       return _selected.contains(s.path);
+//     });
+//     final total = selectedSongs.fold(Duration.zero, (p, s) {
+//       return p + s.duration;
+//     });
+//     widget.onSelectionChanged(_isMulti, _selected.length, widget.format(total));
+//   }
+// }
+*/
