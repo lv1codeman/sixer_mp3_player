@@ -5,9 +5,16 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:audiotags/audiotags.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
+
+// 程式碼分區管理
+import 'models/song.dart';
+import 'utils.dart';
+import 'widgets/sub_header.dart';
+import 'widgets/highlights_text.dart';
+
+import 'pages/queue_page.dart';
 
 // 建立全域的 AudioHandler 實例
 late MyAudioHandler _audioHandler;
@@ -149,137 +156,6 @@ void main() async {
   runApp(const SixerMP3Player());
 }
 
-// void main() {
-//   runApp(const SixerMP3Player());
-// }
-
-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-// 自製全域toast
-void myToast(String message, {double durationSeconds = 2.0}) {
-  // [修改] 直接從 navigatorKey 的 currentState 取得 overlay，避免 Context 搜尋不到的問題
-  final overlayState = navigatorKey.currentState?.overlay;
-  if (overlayState == null) return;
-
-  late OverlayEntry overlayEntry;
-  overlayEntry = OverlayEntry(
-    builder: (context) => Positioned(
-      // [修改] 這裡可以直接使用 MediaQuery 取得全螢幕尺寸
-      top: MediaQuery.of(context).size.height * 0.5,
-      width: MediaQuery.of(context).size.width,
-      child: Material(
-        color: Colors.transparent,
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 24.0,
-              vertical: 12.0,
-            ),
-            margin: const EdgeInsets.symmetric(horizontal: 20.0),
-            decoration: BoxDecoration(
-              // [修改] 繼續使用 withValues 語法
-              color: Colors.black.withValues(alpha: 0.7),
-              borderRadius: BorderRadius.circular(25.0),
-            ),
-            child: Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 16.0),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-
-  // [修改] 使用 overlayState 插入
-  overlayState.insert(overlayEntry);
-
-  Future.delayed(Duration(milliseconds: (durationSeconds * 1000).toInt()), () {
-    overlayEntry.remove();
-  });
-}
-
-// 全域確認對話框，支援自訂標題、內容與確認後的回呼
-void myConfirmDialog({
-  required String title,
-  required String content,
-  required VoidCallback onConfirm,
-  String confirmText = "確定",
-  String cancelText = "取消",
-  Color confirmColor = Colors.red,
-}) {
-  final context = navigatorKey.currentContext;
-  if (context == null) return;
-
-  showDialog(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
-      content: Text(content),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: Text(cancelText),
-        ),
-        TextButton(
-          onPressed: () {
-            onConfirm(); // 執行傳入的刪除動作
-            Navigator.pop(ctx);
-          },
-          child: Text(confirmText, style: TextStyle(color: confirmColor)),
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _buildSubHeader({required String text, Widget? trailing}) {
-  return ConstrainedBox(
-    constraints: const BoxConstraints(minHeight: 48),
-    child: Container(
-      width: double.infinity,
-      alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      color: Colors.black12,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(text, style: const TextStyle(fontSize: 12)),
-          if (trailing != null) trailing,
-        ],
-      ),
-    ),
-  );
-}
-
-// --- 歌曲資料模型 ---
-class Song {
-  final String path;
-  final String title;
-  final Duration duration;
-  Song({required this.path, required this.title, required this.duration});
-
-  String get fileName {
-    return path.split('/').last;
-  }
-
-  // 將 Song 物件轉為 Map 方便轉 JSON
-  Map<String, dynamic> toJson() => {
-    'path': path,
-    'duration': duration.inMilliseconds,
-  };
-
-  // 從 Map 還原為 Song 物件
-  factory Song.fromJson(Map<String, dynamic> json) {
-    return Song(
-      path: json['path'],
-      title: json['title'] ?? "未知曲目",
-      duration: Duration(milliseconds: json['duration']),
-    );
-  }
-}
-
 class SixerMP3Player extends StatefulWidget {
   const SixerMP3Player({super.key});
 
@@ -319,69 +195,6 @@ class _SixerMP3PlayerState extends State<SixerMP3Player> {
       themeMode: _themeMode, // 使用動態的 _themeMode
       // 將切換功能傳遞給 MainScreen
       home: MainScreen(onToggleTheme: _toggleTheme),
-    );
-  }
-}
-
-// --- 搜尋高亮顯示組件 ---
-class HighlightedText extends StatelessWidget {
-  final String text;
-  final String query;
-  final TextStyle? style;
-
-  const HighlightedText({
-    super.key,
-    required this.text,
-    required this.query,
-    this.style,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (query.isEmpty || !text.toLowerCase().contains(query.toLowerCase())) {
-      return Text(
-        text,
-        style: style,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      );
-    }
-
-    final List<TextSpan> spans = [];
-    final String lowercaseText = text.toLowerCase();
-    final String lowercaseQuery = query.toLowerCase();
-    int start = 0;
-    int index = lowercaseText.indexOf(lowercaseQuery);
-
-    while (index != -1) {
-      if (index > start) {
-        spans.add(TextSpan(text: text.substring(start, index)));
-      }
-      spans.add(
-        TextSpan(
-          text: text.substring(index, index + query.length),
-          style: const TextStyle(
-            color: Colors.orange,
-            fontWeight: FontWeight.bold,
-            backgroundColor: Color(0x33FF9800),
-          ),
-        ),
-      );
-      start = index + query.length;
-      index = lowercaseText.indexOf(lowercaseQuery, start);
-    }
-
-    if (start < text.length) {
-      spans.add(TextSpan(text: text.substring(start)));
-    }
-
-    return RichText(
-      text: TextSpan(
-        style: style ?? DefaultTextStyle.of(context).style,
-        children: spans,
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
     );
   }
 }
@@ -788,9 +601,10 @@ class _MainScreenState extends State<MainScreen>
                       });
                       _saveData();
                       Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("已加入清單：$finalName")),
-                      );
+                      // ScaffoldMessenger.of(context).showSnackBar(
+                      //   SnackBar(content: Text("已加入清單：$finalName")),
+                      // );
+                      myToast("已加入清單：$finalName");
                     }
                   },
                   child: const Text("儲存"),
@@ -1347,166 +1161,166 @@ class _MainScreenState extends State<MainScreen>
 }
 
 // --- 1. 佇列頁面 ---
-class QueuePage extends StatelessWidget {
-  final List<Song> queue;
-  final String currentPath;
-  final String query;
-  final String Function(Duration) format;
-  final Function(String) onPlay;
-  final VoidCallback onClear;
-  final Function(int, int) onReorder;
-  final Function(int) onDelete;
-  final VoidCallback onSaveAsPlaylist;
+// class QueuePage extends StatelessWidget {
+//   final List<Song> queue;
+//   final String currentPath;
+//   final String query;
+//   final String Function(Duration) format;
+//   final Function(String) onPlay;
+//   final VoidCallback onClear;
+//   final Function(int, int) onReorder;
+//   final Function(int) onDelete;
+//   final VoidCallback onSaveAsPlaylist;
 
-  const QueuePage({
-    super.key,
-    required this.queue,
-    required this.currentPath,
-    required this.query,
-    required this.format,
-    required this.onPlay,
-    required this.onClear,
-    required this.onReorder,
-    required this.onDelete,
-    required this.onSaveAsPlaylist,
-  });
+//   const QueuePage({
+//     super.key,
+//     required this.queue,
+//     required this.currentPath,
+//     required this.query,
+//     required this.format,
+//     required this.onPlay,
+//     required this.onClear,
+//     required this.onReorder,
+//     required this.onDelete,
+//     required this.onSaveAsPlaylist,
+//   });
 
-  @override
-  Widget build(BuildContext context) {
-    final filtered = queue.where((s) {
-      return s.fileName.toLowerCase().contains(query.toLowerCase());
-    }).toList();
+//   @override
+//   Widget build(BuildContext context) {
+//     final filtered = queue.where((s) {
+//       return s.fileName.toLowerCase().contains(query.toLowerCase());
+//     }).toList();
 
-    final totalDuration = filtered.fold(
-      Duration.zero,
-      (p, s) => p + s.duration,
-    );
+//     final totalDuration = filtered.fold(
+//       Duration.zero,
+//       (p, s) => p + s.duration,
+//     );
 
-    return Column(
-      children: [
-        _buildSubHeader(
-          text: "佇列：${filtered.length} 首 (${format(totalDuration)})",
-          trailing: filtered.isNotEmpty
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // 新增：加入清單鈕 (在左邊)
-                    TextButton.icon(
-                      onPressed: onSaveAsPlaylist,
-                      icon: const Icon(Icons.playlist_add, size: 18),
-                      label: const Text("加入清單", style: TextStyle(fontSize: 12)),
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                    // 原本的清空鈕 (在右邊)
-                    TextButton.icon(
-                      onPressed: onClear,
-                      icon: const Icon(
-                        Icons.delete_sweep,
-                        size: 18,
-                        color: Colors.redAccent,
-                      ),
-                      label: const Text(
-                        "清空",
-                        style: TextStyle(fontSize: 12, color: Colors.redAccent),
-                      ),
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ),
-                  ],
-                )
-              : null,
-        ),
+//     return Column(
+//       children: [
+//         SubHeader(
+//           text: "佇列：${filtered.length} 首 (${format(totalDuration)})",
+//           trailing: filtered.isNotEmpty
+//               ? Row(
+//                   mainAxisSize: MainAxisSize.min,
+//                   children: [
+//                     // 新增：加入清單鈕 (在左邊)
+//                     TextButton.icon(
+//                       onPressed: onSaveAsPlaylist,
+//                       icon: const Icon(Icons.playlist_add, size: 18),
+//                       label: const Text("加入清單", style: TextStyle(fontSize: 12)),
+//                       style: TextButton.styleFrom(
+//                         visualDensity: VisualDensity.compact,
+//                       ),
+//                     ),
+//                     // 原本的清空鈕 (在右邊)
+//                     TextButton.icon(
+//                       onPressed: onClear,
+//                       icon: const Icon(
+//                         Icons.delete_sweep,
+//                         size: 18,
+//                         color: Colors.redAccent,
+//                       ),
+//                       label: const Text(
+//                         "清空",
+//                         style: TextStyle(fontSize: 12, color: Colors.redAccent),
+//                       ),
+//                       style: TextButton.styleFrom(
+//                         visualDensity: VisualDensity.compact,
+//                       ),
+//                     ),
+//                   ],
+//                 )
+//               : null,
+//         ),
 
-        // --- 1. 佇列頁面 (QueuePage) ---
-        // ... 前方代碼不變 ...
-        Expanded(
-          child: ReorderableListView.builder(
-            onReorder: (oldIdx, newIdx) {
-              final int realOldIdx = queue.indexOf(filtered[oldIdx]);
-              int realNewIdx = queue.indexOf(
-                filtered[newIdx > oldIdx ? newIdx - 1 : newIdx],
-              );
-              if (newIdx > oldIdx) {
-                realNewIdx++;
-              }
-              onReorder(realOldIdx, realNewIdx);
-            },
-            buildDefaultDragHandles: false,
-            itemCount: filtered.length,
-            // 在 main.dart 約第 1020 行處修改
-            itemBuilder: (ctx, idx) {
-              final s = filtered[idx];
-              final itemKey = ValueKey("${s.path}_$idx");
-              final bool isPlaying = (s.path == currentPath);
-              // 1. 將 Listener 放在最外層，確保整個 ListTile 都能觸發計時器
-              return ReorderableDelayedDragStartListener(
-                key: itemKey,
-                index: idx,
-                child: Listener(
-                  //放棄震動
-                  child: ListTile(
-                    tileColor: isPlaying
-                        ? Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer.withValues(alpha: 0.5)
-                        : null,
-                    // 這裡不再需要包裹 Listener，避免手勢攔截
-                    leading: Transform.translate(
-                      offset: Offset(isPlaying ? -6.5 : 0, 0),
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: isPlaying
-                            ? const Icon(
-                                Icons.play_arrow_rounded,
-                                color: Colors.orange,
-                                size: 36,
-                              )
-                            : const Icon(Icons.menu),
-                      ),
-                    ),
-                    title: HighlightedText(
-                      text: s.fileName,
-                      query: query,
-                      style: TextStyle(
-                        fontWeight: isPlaying
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        color: isPlaying
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
-                      ),
-                    ),
-                    subtitle: Text(
-                      format(s.duration),
-                      style: const TextStyle(fontSize: 10),
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        myConfirmDialog(
-                          title: "確認刪除",
-                          content: "確定要從佇列中移除「${s.fileName}」嗎？",
-                          onConfirm: () {
-                            onDelete(queue.indexOf(s));
-                            myToast("已從佇列移除", durationSeconds: 1.0);
-                          },
-                        );
-                      },
-                    ),
-                    onTap: () => onPlay(s.path),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
+//         // --- 1. 佇列頁面 (QueuePage) ---
+//         // ... 前方代碼不變 ...
+//         Expanded(
+//           child: ReorderableListView.builder(
+//             onReorder: (oldIdx, newIdx) {
+//               final int realOldIdx = queue.indexOf(filtered[oldIdx]);
+//               int realNewIdx = queue.indexOf(
+//                 filtered[newIdx > oldIdx ? newIdx - 1 : newIdx],
+//               );
+//               if (newIdx > oldIdx) {
+//                 realNewIdx++;
+//               }
+//               onReorder(realOldIdx, realNewIdx);
+//             },
+//             buildDefaultDragHandles: false,
+//             itemCount: filtered.length,
+//             // 在 main.dart 約第 1020 行處修改
+//             itemBuilder: (ctx, idx) {
+//               final s = filtered[idx];
+//               final itemKey = ValueKey("${s.path}_$idx");
+//               final bool isPlaying = (s.path == currentPath);
+//               // 1. 將 Listener 放在最外層，確保整個 ListTile 都能觸發計時器
+//               return ReorderableDelayedDragStartListener(
+//                 key: itemKey,
+//                 index: idx,
+//                 child: Listener(
+//                   //放棄震動
+//                   child: ListTile(
+//                     tileColor: isPlaying
+//                         ? Theme.of(
+//                             context,
+//                           ).colorScheme.primaryContainer.withValues(alpha: 0.5)
+//                         : null,
+//                     // 這裡不再需要包裹 Listener，避免手勢攔截
+//                     leading: Transform.translate(
+//                       offset: Offset(isPlaying ? -6.5 : 0, 0),
+//                       child: Padding(
+//                         padding: const EdgeInsets.all(8.0),
+//                         child: isPlaying
+//                             ? const Icon(
+//                                 Icons.play_arrow_rounded,
+//                                 color: Colors.orange,
+//                                 size: 36,
+//                               )
+//                             : const Icon(Icons.menu),
+//                       ),
+//                     ),
+//                     title: HighlightedText(
+//                       text: s.fileName,
+//                       query: query,
+//                       style: TextStyle(
+//                         fontWeight: isPlaying
+//                             ? FontWeight.bold
+//                             : FontWeight.normal,
+//                         color: isPlaying
+//                             ? Theme.of(context).colorScheme.primary
+//                             : null,
+//                       ),
+//                     ),
+//                     subtitle: Text(
+//                       format(s.duration),
+//                       style: const TextStyle(fontSize: 10),
+//                     ),
+//                     trailing: IconButton(
+//                       icon: const Icon(Icons.close),
+//                       onPressed: () {
+//                         myConfirmDialog(
+//                           title: "確認刪除",
+//                           content: "確定要從佇列中移除「${s.fileName}」嗎？",
+//                           onConfirm: () {
+//                             onDelete(queue.indexOf(s));
+//                             myToast("已從佇列移除", durationSeconds: 1.0);
+//                           },
+//                         );
+//                       },
+//                     ),
+//                     onTap: () => onPlay(s.path),
+//                   ),
+//                 ),
+//               );
+//             },
+//           ),
+//         ),
+//       ],
+//     );
+//   }
+// }
 
 // --- 2. 瀏覽頁面 ---
 class FileBrowserPage extends StatefulWidget {
@@ -1594,7 +1408,7 @@ class _FileBrowserPageState extends State<FileBrowserPage>
 
     return Column(
       children: [
-        _buildSubHeader(
+        SubHeader(
           text: "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
           // 如果未來想在這裡加按鈕（例如全選），可以放在 trailing 參數
         ),
@@ -1715,7 +1529,7 @@ class FavoritePage extends StatelessWidget {
 
     return Column(
       children: [
-        _buildSubHeader(text: "收藏歌曲：${list.length} 首"),
+        SubHeader(text: "收藏歌曲：${list.length} 首"),
         Expanded(
           child: ListView.builder(
             itemCount: list.length,
@@ -1778,7 +1592,7 @@ class PlaylistPage extends StatelessWidget {
     return Column(
       children: [
         // 加入一個簡單的數量統計（與其他頁面風格一致）
-        _buildSubHeader(
+        SubHeader(
           text: (query == '')
               ? "現有清單：${names.length} 個"
               : "符合條件的清單：${names.length} 個",
