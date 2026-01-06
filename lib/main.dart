@@ -82,6 +82,8 @@ class _SixerMP3PlayerState extends State<SixerMP3Player> {
   }
 }
 
+enum PlaySource { queue, all, favorites } //播放來源：佇列、瀏覽、收藏
+
 class MainScreen extends StatefulWidget {
   final VoidCallback onToggleTheme;
   const MainScreen({super.key, required this.onToggleTheme});
@@ -98,8 +100,8 @@ class _MainScreenState extends State<MainScreen>
   final TextEditingController _searchController = TextEditingController();
   final GlobalKey<FileBrowserPageState> _fileBrowserKey = GlobalKey();
 
-  final List<Song> _playQueue = [];
-  final List<Song> _allSongs = []; // 歌曲總表搬到這裡
+  final List<Song> _playQueue = []; // 播放器的歌曲總表
+  final List<Song> _allSongs = []; // 瀏覽頁面的歌曲總表
   bool _isScanning = false;
   String _currentPath = "";
   String _currentTitle = "未在播放";
@@ -116,6 +118,19 @@ class _MainScreenState extends State<MainScreen>
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   bool _isDragging = false;
+  PlaySource _activeSource = PlaySource.queue;
+
+  List<Song> get _currentPlayingList {
+    switch (_activeSource) {
+      case PlaySource.favorites:
+        // 從總表中過濾出收藏的歌曲
+        return _allSongs.where((s) => _favorites.contains(s.path)).toList();
+      case PlaySource.all:
+        return _allSongs;
+      case PlaySource.queue:
+        return _playQueue;
+    }
+  }
 
   @override
   void initState() {
@@ -267,30 +282,40 @@ class _MainScreenState extends State<MainScreen>
   }
 
   void _handlePrevious() {
-    if (_playQueue.isEmpty) {
-      return;
+    final currentList = _currentPlayingList;
+    if (currentList.isEmpty) return;
+
+    int idx = currentList.indexWhere((s) => s.path == _currentPath);
+    int prevIdx;
+
+    if (_playMode == 2) {
+      prevIdx = Random().nextInt(currentList.length);
+    } else {
+      prevIdx = (idx - 1 + currentList.length) % currentList.length;
     }
-    int idx = _playQueue.indexWhere((s) {
-      return s.path == _currentPath;
-    });
-    int prevIdx = (idx - 1 + _playQueue.length) % _playQueue.length;
-    _handlePlay(_playQueue[prevIdx].path);
+    _handlePlay(currentList[prevIdx].path);
   }
 
   void _handleNext() {
-    if (_playQueue.isEmpty) {
+    // 1. 取得目前的動態播放清單（依據 _activeSource 決定）
+    final currentList = _currentPlayingList;
+    if (currentList.isEmpty) {
       return;
     }
-    int idx = _playQueue.indexWhere((s) {
+    // 2. 找出目前播放路徑在該清單中的位置
+    int idx = currentList.indexWhere((s) {
       return s.path == _currentPath;
     });
     int nextIdx;
+    // 3. 處理隨機播放邏輯 (_playMode == 2)
     if (_playMode == 2) {
-      nextIdx = Random().nextInt(_playQueue.length);
+      nextIdx = Random().nextInt(currentList.length);
     } else {
-      nextIdx = (idx + 1) % _playQueue.length;
+      // 4. 處理循序或單曲循環 (_playMode 0 或 1)
+      nextIdx = (idx + 1) % currentList.length;
     }
-    _handlePlay(_playQueue[nextIdx].path);
+    // 5. 執行播放
+    _handlePlay(currentList[nextIdx].path);
   }
 
   void _handlePlay(String path) async {
@@ -363,15 +388,8 @@ class _MainScreenState extends State<MainScreen>
     await _saveData();
   }
 
-  void _deletePlaylist(String name) {
-    setState(() {
-      _playlists.remove(name);
-    });
-    _saveData(); // 確保刪除後同步到本機儲存
-  }
-
   void _addPlaylistToQueue(String playlistName) {
-    debugPrint("播放清單被按囉!!!!!!!!!!!!!!!!!!");
+    // debugPrint("播放清單被按囉!!!!!!!!!!!!!!!!!!");
     final paths = _playlists[playlistName];
     if (paths != null) {
       setState(() {
@@ -477,17 +495,16 @@ class _MainScreenState extends State<MainScreen>
                         }
                         // 整合邏輯：將傳入的所有路徑加入該清單
                         _playlists[finalName]!.addAll(songPaths);
-                        // 去除重複歌曲（選選）
+                        // 去除重複歌曲
                         _playlists[finalName] = _playlists[finalName]!
                             .toSet()
                             .toList();
                       });
                       _saveData();
                       Navigator.pop(ctx);
-                      // ScaffoldMessenger.of(context).showSnackBar(
-                      //   SnackBar(content: Text("已加入清單：$finalName")),
-                      // );
                       myToast("已加入清單：$finalName");
+                      // 另存後清空
+                      _fileBrowserKey.currentState?.cancelSelection();
                     }
                   },
                   child: const Text("儲存"),
@@ -659,7 +676,13 @@ class _MainScreenState extends State<MainScreen>
                   currentPath: _currentPath,
                   query: _searchController.text,
                   format: _formatDuration,
-                  onPlay: _handlePlay,
+                  onPlay: (path) {
+                    setState(() {
+                      // 關鍵！設定播放來源為「佇列」
+                      _activeSource = PlaySource.queue;
+                    });
+                    _handlePlay(path);
+                  },
                   onClear: _clearQueue,
                   onReorder: _handleReorder, // 傳入排序
                   onDelete: _handleDeleteFromQueue, // 傳入刪除
@@ -679,13 +702,20 @@ class _MainScreenState extends State<MainScreen>
                 FileBrowserPage(
                   allSongs: _allSongs, // 傳入主畫面的清單
                   currentQueue: _playQueue,
+                  currentPath: _currentPath,
                   isScanning: _isScanning, // 傳入主畫面的掃描狀態
                   onScan: _checkPermissionAndScan, // 傳入主畫面的掃描函數
                   key: _fileBrowserKey,
                   query: _searchController.text,
                   format: _formatDuration,
                   favorites: _favorites,
-                  onPlay: _handlePlay,
+                  onPlay: (path) {
+                    setState(() {
+                      // 關鍵！設定播放來源為「所有歌曲總表」
+                      _activeSource = PlaySource.all;
+                    });
+                    _handlePlay(path);
+                  },
                   onToggleFav: _toggleFav,
                   onBatchAdd: (songs) {
                     setState(() {
@@ -705,14 +735,25 @@ class _MainScreenState extends State<MainScreen>
                   favorites: _favorites,
                   query: _searchController.text,
                   format: _formatDuration,
-                  onPlay: _handlePlay,
+                  onPlay: (path) {
+                    setState(() {
+                      // 關鍵！設定播放來源為「收藏」
+                      _activeSource = PlaySource.favorites;
+                    });
+                    _handlePlay(path);
+                  },
                   onToggle: _toggleFav,
                 ),
                 PlaylistPage(
                   playlists: _playlists,
                   query: _searchController.text,
                   onPlaylistTap: _addPlaylistToQueue,
-                  onDeletePlaylist: _deletePlaylist,
+                  onDataChanged: () {
+                    setState(
+                      () {},
+                    ); //playlist delete的時候也會用到，沒有setState的話不會刷新，就看不到清單刪除
+                    _saveData();
+                  },
                 ),
               ],
             ),
@@ -768,6 +809,8 @@ class _MainScreenState extends State<MainScreen>
                             ),
                             // 2. 另存播放清單
                             ElevatedButton.icon(
+                              icon: const Icon(Icons.playlist_add),
+                              label: const Text("另存清單"),
                               onPressed: () {
                                 final paths =
                                     _fileBrowserKey
@@ -782,16 +825,14 @@ class _MainScreenState extends State<MainScreen>
                                   );
                                 }
                               },
-                              icon: const Icon(Icons.playlist_add),
-                              label: const Text("另存清單"),
                             ),
                             // 3. 取消按鈕
                             TextButton.icon(
+                              icon: const Icon(Icons.close),
+                              label: const Text("取消"),
                               onPressed: () {
                                 _fileBrowserKey.currentState?.cancelSelection();
                               },
-                              icon: const Icon(Icons.close),
-                              label: const Text("取消"),
                             ),
                           ],
                         ),

@@ -49,17 +49,25 @@ class QueuePage extends StatelessWidget {
             children: [
               // 另存為播放清單按鈕
               if (filtered.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.playlist_add, size: 20),
+                TextButton.icon(
                   onPressed: onSaveAsPlaylist,
-                  tooltip: "另存為清音單",
+                  icon: const Icon(Icons.playlist_add, size: 20),
+                  label: const Text("另存清單"),
+                  style: TextButton.styleFrom(
+                    // foregroundColor: Colors.red,
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                  ),
                 ),
               // 清空按鈕
               if (filtered.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.delete_sweep, size: 20),
+                TextButton.icon(
                   onPressed: onClear,
-                  tooltip: "清空佇列",
+                  icon: const Icon(Icons.delete_sweep, size: 20),
+                  label: const Text("清空"),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                  ),
                 ),
             ],
           ),
@@ -78,8 +86,13 @@ class QueuePage extends StatelessWidget {
 
                     return ListTile(
                       key: ValueKey(song.path + idx.toString()),
+                      tileColor: isPlaying
+                          ? Theme.of(context).primaryColor.withAlpha(30)
+                          : null,
                       leading: Icon(
-                        isPlaying ? Icons.play_circle_fill : Icons.music_note,
+                        isPlaying
+                            ? Icons.play_circle_fill
+                            : Icons.dehaze_rounded,
                         color: isPlaying
                             ? Theme.of(context).primaryColor
                             : null,
@@ -95,7 +108,8 @@ class QueuePage extends StatelessWidget {
                         ),
                       ),
                       subtitle: Text(
-                        "${format(song.duration)} | ${song.path}",
+                        // "${format(song.duration)} | ${song.path}",
+                        format(song.duration),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 11),

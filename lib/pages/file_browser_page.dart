@@ -12,6 +12,7 @@ import '../utils/utils.dart';
 class FileBrowserPage extends StatefulWidget {
   final List<Song> allSongs;
   final List<Song> currentQueue;
+  final String? currentPath; // 接收目前播放中的路徑
   final bool isScanning;
   final VoidCallback onScan;
   final String query;
@@ -26,6 +27,7 @@ class FileBrowserPage extends StatefulWidget {
     super.key,
     required this.allSongs,
     required this.currentQueue,
+    required this.currentPath,
     required this.isScanning,
     required this.onScan,
     required this.query,
@@ -122,8 +124,11 @@ class FileBrowserPageState extends State<FileBrowserPage>
                     final s = filtered[idx];
                     bool isChecked = _selected.contains(s.path);
                     bool isFav = widget.favorites.contains(s.path);
-
+                    bool isPlaying = widget.currentPath == s.path;
                     return ListTile(
+                      tileColor: isPlaying
+                          ? Theme.of(context).primaryColor.withAlpha(30)
+                          : null,
                       leading: _isMulti
                           ? Checkbox(
                               value: isChecked,
@@ -138,10 +143,26 @@ class FileBrowserPageState extends State<FileBrowserPage>
                                 _notify();
                               },
                             )
-                          : const Icon(Icons.music_note),
+                          : Icon(
+                              isPlaying
+                                  ? Icons.play_circle_fill
+                                  : Icons.music_note,
+                              color: isPlaying
+                                  ? Theme.of(context).primaryColor
+                                  : null,
+                            ),
                       title: HighlightedText(
                         text: s.fileName,
                         query: widget.query,
+                        // ✅ 新增：播放中加粗並變色
+                        style: TextStyle(
+                          fontWeight: isPlaying
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: isPlaying
+                              ? Theme.of(context).primaryColor
+                              : null,
+                        ),
                       ),
                       subtitle: Text(
                         widget.format(s.duration),
