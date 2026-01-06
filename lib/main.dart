@@ -733,6 +733,7 @@ class _MainScreenState extends State<MainScreen>
                 ),
                 FavoritePage(
                   favorites: _favorites,
+                  currentPath: _currentPath,
                   query: _searchController.text,
                   format: _formatDuration,
                   onPlay: (path) {
