@@ -1,10 +1,8 @@
 // lib/main.dart
-import 'dart:io';
 import 'dart:async';
 import 'dart:math';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_service/audio_service.dart';
@@ -21,6 +19,7 @@ import 'services/audio_handler.dart';
 import 'widgets/mini_player.dart';
 import 'widgets/multi_select_bar.dart';
 import 'widgets/playlist_dialogs.dart';
+import 'widgets/music_search_bar.dart';
 
 // 建立全域的 AudioHandler 實例
 late MyAudioHandler _audioHandler;
@@ -104,7 +103,6 @@ class _MainScreenState extends State<MainScreen>
 
   final List<Song> _playQueue = []; // 播放器的歌曲總表
   final List<Song> _allSongs = []; // 瀏覽頁面的歌曲總表
-  bool _isScanning = false;
   String _currentPath = "";
   String _currentTitle = "未在播放";
   bool _isPlaying = false;
@@ -166,7 +164,7 @@ class _MainScreenState extends State<MainScreen>
       // 確保資料載入後，自動執行掃描
       // 使用 WidgetsBinding 確保在第一幀渲染完成後執行，避免與 UI 構建衝突
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _checkPermissionAndScan();
+        _fileBrowserKey.currentState?.refreshFiles();
       });
     });
     // [修改] 監聽背景播放狀態，同步 UI 按鈕
@@ -198,83 +196,6 @@ class _MainScreenState extends State<MainScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
-  }
-
-  Future<void> _checkPermissionAndScan() async {
-    // 適配 Android 13+
-    bool hasPermission = false;
-    if (Platform.isAndroid) {
-      hasPermission =
-          await Permission.audio.request().isGranted ||
-          await Permission.storage.request().isGranted;
-    }
-
-    if (hasPermission) {
-      setState(() {
-        _isScanning = true;
-        _allSongs.clear();
-      });
-
-      final root = Directory('/storage/emulated/0');
-      final List<Song> tempSongs = []; // 使用暫存清單
-
-      try {
-        // 1. 快速掃描路徑，暫時不讀取 AudioTags
-        await for (var entity
-            in root
-                .list(recursive: true, followLinks: false)
-                .handleError((e) {})) {
-          if (entity is File &&
-              entity.path.toLowerCase().endsWith('.mp3') &&
-              !entity.path.contains('/Android/')) {
-            // 這裡先給 Duration.zero，追求最快掃描速度
-
-            final player = AudioPlayer();
-            Duration? d;
-            try {
-              // 這會稍微增加掃描時間，但能獲得正確時長
-              d = await player.setFilePath(entity.path);
-            } catch (e) {
-              debugPrint("讀取時長出錯: $e");
-            } finally {
-              await player.dispose();
-            }
-
-            tempSongs.add(
-              Song(
-                path: entity.path,
-                title: entity.path.split('/').last,
-                duration: d ?? Duration.zero,
-              ),
-            );
-
-            // 每找到 20 首歌更新一次 UI，兼顧進度顯示與效能
-            if (tempSongs.length % 20 == 0) {
-              if (mounted) {
-                setState(() {
-                  _allSongs.clear(); // 先清空原本的內容
-                  _allSongs.addAll(tempSongs); // 再把掃描到的新歌加進去
-                });
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint("掃描中斷: $e");
-      }
-
-      if (mounted) {
-        setState(() {
-          // [修正] 不能直接賦值，改用 clear + addAll
-          _allSongs.clear();
-          _allSongs.addAll(tempSongs);
-          _isScanning = false;
-        });
-        _saveData(); // 掃描完存檔
-      }
-    } else {
-      myToast("未取得讀取權限");
-    }
   }
 
   void _onBottomNavTapped(int index) {
@@ -574,64 +495,26 @@ class _MainScreenState extends State<MainScreen>
 
   @override
   Widget build(BuildContext context) {
-    bool isBrowser = (_selectedIndex == 1);
     bool isPlaylistPage = (_selectedIndex == 3);
 
     return Scaffold(
-      appBar: AppBar(
-        title: _isSearching
-            ? TextField(
-                controller: _searchController,
-                autofocus: true, // 自動彈起鍵盤
-                style: Theme.of(context).textTheme.titleLarge,
-                decoration: const InputDecoration(
-                  hintText: "搜尋音樂...",
-                  border: InputBorder.none, // 移除輸入框底線，使其融入 AppBar
-                  hintStyle: TextStyle(color: Colors.grey),
-                ),
-                onChanged: (v) {
-                  setState(() {}); // 即時更新列表過濾
-                },
-              )
-            : const Text("SixerMP3"),
-        actions: [
-          if (!_isSearching && isBrowser) ...{
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () {
-                _checkPermissionAndScan();
-              },
-            ),
-          },
-          // 2. 根據是否搜尋中，切換按鈕圖示與功能
-          _isSearching
-              ? IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () {
-                    setState(() {
-                      _isSearching = false;
-                      _searchController.clear(); // 清除搜尋內容
-                    });
-                  },
-                )
-              : IconButton(
-                  icon: Icon(_isSearching ? Icons.close : Icons.search),
-                  onPressed: () {
-                    setState(() {
-                      _isSearching = !_isSearching;
-                      _searchController.clear();
-                    });
-                  },
-                ),
-          IconButton(
-            icon: Icon(
-              Theme.of(context).brightness == Brightness.light
-                  ? Icons.dark_mode
-                  : Icons.light_mode,
-            ),
-            onPressed: widget.onToggleTheme, // 呼叫傳進來的切換函數
-          ),
-        ],
+      appBar: MusicSearchBar(
+        isSearching: _isSearching,
+        isBrowser: _selectedIndex == 1, // 1 是瀏覽頁面
+        title: "SixerMP3",
+        controller: _searchController,
+        onSearchToggle: () {
+          setState(() {
+            _isSearching = !_isSearching;
+          });
+        },
+        onRefresh: () {
+          _fileBrowserKey.currentState?.refreshFiles();
+        },
+        onToggleTheme: widget.onToggleTheme, // 呼叫傳進來的切換函數
+        onChanged: (value) {
+          setState(() {}); // 觸發 UI 重新 build 以過濾列表
+        },
       ),
       body: Column(
         children: [
@@ -674,18 +557,25 @@ class _MainScreenState extends State<MainScreen>
                 ),
                 // 瀏覽頁面
                 FileBrowserPage(
-                  allSongs: _allSongs, // 傳入主畫面的清單
+                  key: _fileBrowserKey,
+                  initialSongs: _allSongs,
                   currentQueue: _playQueue,
                   currentPath: _currentPath,
-                  isScanning: _isScanning, // 傳入主畫面的掃描狀態
-                  onScan: _checkPermissionAndScan, // 傳入主畫面的掃描函數
-                  key: _fileBrowserKey,
+                  favorites: _favorites,
                   query: _searchController.text,
                   format: _formatDuration,
-                  favorites: _favorites,
+
+                  onScanComplete: (newSongs) {
+                    setState(() {
+                      _allSongs.clear();
+                      _allSongs.addAll(newSongs);
+                    });
+                    _saveData();
+                    // myToast("掃描完成，共 ${newSongs.length} 首歌曲");
+                  },
+
                   onPlay: (path) {
                     setState(() {
-                      // 關鍵！設定播放來源為「所有歌曲總表」
                       _activeSource = PlaySource.all;
                     });
                     _handlePlay(path);

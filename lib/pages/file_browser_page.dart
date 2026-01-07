@@ -5,17 +5,15 @@ import '../widgets/sub_header.dart';
 import '../widgets/highlighted_text.dart';
 import '../utils/utils.dart';
 
-// // 假設你有一個全域或工具類別的 toast，如果沒有，請換回 ScaffoldMessenger
-// void myToast(String message) {
-//   // 這裡放你原本的 toast 實作
-// }
+import 'dart:io'; // 提供 Platform, Directory, File
+import 'package:permission_handler/permission_handler.dart'; // 提供 Permission
+import 'package:just_audio/just_audio.dart'; // 提供 AudioPlayer
 
 class FileBrowserPage extends StatefulWidget {
-  final List<Song> allSongs;
+  final List<Song> initialSongs;
+  final Function(List<Song>) onScanComplete;
   final List<Song> currentQueue;
   final String? currentPath; // 接收目前播放中的路徑
-  final bool isScanning;
-  final VoidCallback onScan;
   final String query;
   final String Function(Duration) format;
   final Set<String> favorites;
@@ -26,11 +24,10 @@ class FileBrowserPage extends StatefulWidget {
 
   const FileBrowserPage({
     super.key,
-    required this.allSongs,
+    required this.initialSongs,
+    required this.onScanComplete,
     required this.currentQueue,
     required this.currentPath,
-    required this.isScanning,
-    required this.onScan,
     required this.query,
     required this.format,
     required this.favorites,
@@ -53,6 +50,92 @@ class FileBrowserPageState extends State<FileBrowserPage>
   @override
   bool get wantKeepAlive => true;
 
+  bool _isScanning = false;
+  final List<Song> _localSongs = []; // 建立內部的歌曲清單
+
+  @override
+  void initState() {
+    super.initState();
+    _localSongs.addAll(widget.initialSongs);
+    if (_localSongs.isEmpty) {
+      refreshFiles();
+    }
+  }
+
+  // 原本的_checkPermissionAndScan，用於讀檔，只掃描手機上所有.mp3檔案並且排除/Android/資料夾
+  Future<void> refreshFiles() async {
+    bool hasPermission = false;
+    if (Platform.isAndroid) {
+      hasPermission =
+          await Permission.audio.request().isGranted ||
+          await Permission.storage.request().isGranted;
+    }
+
+    if (hasPermission) {
+      setState(() {
+        _isScanning = true;
+        _localSongs.clear();
+      });
+
+      final root = Directory('/storage/emulated/0');
+      final List<Song> tempSongs = [];
+
+      try {
+        await for (var entity
+            in root.list(recursive: true, followLinks: false).handleError((e) {
+              debugPrint("掃描路徑錯誤: $e"); // 避免空的 catch
+            })) {
+          if (entity is File &&
+              entity.path.toLowerCase().endsWith('.mp3') &&
+              !entity.path.contains('/Android/')) {
+            //掃描時排除/Android/資料夾
+            final player = AudioPlayer();
+            Duration? d;
+            try {
+              d = await player.setFilePath(entity.path);
+            } catch (e) {
+              debugPrint("讀取時長出錯: $e");
+            } finally {
+              await player.dispose();
+            }
+
+            tempSongs.add(
+              Song(
+                path: entity.path,
+                title: entity.path.split('/').last,
+                duration: d ?? Duration.zero,
+              ),
+            );
+
+            if (tempSongs.length % 20 == 0) {
+              // 每20首掃描一次
+              if (mounted) {
+                setState(() {
+                  _localSongs.clear();
+                  _localSongs.addAll(tempSongs);
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("掃描中斷: $e");
+      }
+
+      if (mounted) {
+        setState(() {
+          _localSongs.clear();
+          _localSongs.addAll(tempSongs);
+          _isScanning = false;
+        });
+        // 關鍵：將結果回傳給 MainScreen，讓 MainScreen 去執行 _saveData()
+        widget.onScanComplete(_localSongs);
+      }
+    } else {
+      myToast("未取得讀取權限");
+    }
+  }
+
   // 公開方法：讓 main.dart 可以透過 GlobalKey 呼叫來取消選取或執行加入
   void cancelSelection() {
     setState(() {
@@ -63,7 +146,7 @@ class FileBrowserPageState extends State<FileBrowserPage>
   }
 
   void performAdd() {
-    final toAdd = widget.allSongs.where((s) {
+    final toAdd = _localSongs.where((s) {
       bool isSelected = _selected.contains(s.path);
       bool alreadyInQueue = widget.currentQueue.any(
         (item) => item.path == s.path,
@@ -83,7 +166,7 @@ class FileBrowserPageState extends State<FileBrowserPage>
   }
 
   void _notify() {
-    final selectedSongs = widget.allSongs.where((s) {
+    final selectedSongs = _localSongs.where((s) {
       return _selected.contains(s.path);
     });
     final total = selectedSongs.fold(Duration.zero, (p, s) {
@@ -96,7 +179,7 @@ class FileBrowserPageState extends State<FileBrowserPage>
   Widget build(BuildContext context) {
     super.build(context); // 必須呼叫
 
-    final filtered = widget.allSongs.where((s) {
+    final filtered = _localSongs.where((s) {
       return s.fileName.toLowerCase().contains(widget.query.toLowerCase());
     }).toList();
 
@@ -110,9 +193,9 @@ class FileBrowserPageState extends State<FileBrowserPage>
         SubHeader(
           text: "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
         ),
-        if (widget.isScanning) const LinearProgressIndicator(),
+        if (_isScanning) const LinearProgressIndicator(),
         Expanded(
-          child: widget.allSongs.isEmpty && !widget.isScanning
+          child: _localSongs.isEmpty && !_isScanning
               ? const Center(
                   child: Text(
                     "找不到音樂檔案(.mp3)",
