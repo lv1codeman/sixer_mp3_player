@@ -19,6 +19,8 @@ import 'pages/favorite_page.dart';
 import 'pages/playlist_page.dart';
 import 'services/audio_handler.dart';
 import 'widgets/mini_player.dart';
+import 'widgets/multi_select_bar.dart';
+import 'widgets/playlist_dialogs.dart';
 
 // 建立全域的 AudioHandler 實例
 late MyAudioHandler _audioHandler;
@@ -442,101 +444,6 @@ class _MainScreenState extends State<MainScreen>
     _saveData();
   }
 
-  // 整合後的通用方法：傳入要儲存的歌曲路徑清單
-  void _showSaveSongsToPlaylistDialog(List<String> songPaths) {
-    if (songPaths.isEmpty) return;
-
-    final TextEditingController nameController = TextEditingController();
-    String? selectedExistingName;
-    bool isDropdownActive = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            // 如果下拉選單有值，禁用輸入框；反之亦然
-            bool isTextEnabled = !isDropdownActive;
-            bool isDropdownEnabled = nameController.text.trim().isEmpty;
-
-            return AlertDialog(
-              title: const Text("儲存至播放清單"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    enabled: isTextEnabled,
-                    decoration: const InputDecoration(
-                      labelText: "新建清單名稱",
-                      hintText: "請輸入名稱",
-                    ),
-                    onChanged: (v) => setDialogState(() {}),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8.0),
-                    child: Text(
-                      "— 或 —",
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                  ),
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: "加入現有清單"),
-                    hint: const Text("選擇已有清單"),
-                    onChanged: isDropdownEnabled
-                        ? (val) {
-                            setDialogState(() {
-                              selectedExistingName = val;
-                              isDropdownActive = (val != null);
-                            });
-                          }
-                        : null,
-                    items: _playlists.keys.map((n) {
-                      return DropdownMenuItem(value: n, child: Text(n));
-                    }).toList(),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text("取消"),
-                ),
-                TextButton(
-                  onPressed: () {
-                    String finalName = isDropdownActive
-                        ? (selectedExistingName ?? "")
-                        : nameController.text.trim();
-
-                    if (finalName.isNotEmpty) {
-                      setState(() {
-                        if (!_playlists.containsKey(finalName)) {
-                          _playlists[finalName] = [];
-                        }
-                        // 整合邏輯：將傳入的所有路徑加入該清單
-                        _playlists[finalName]!.addAll(songPaths);
-                        // 去除重複歌曲
-                        _playlists[finalName] = _playlists[finalName]!
-                            .toSet()
-                            .toList();
-                      });
-                      _saveData();
-                      Navigator.pop(ctx);
-                      myToast("已加入清單：$finalName");
-                      // 另存後清空
-                      _fileBrowserKey.currentState?.cancelSelection();
-                    }
-                  },
-                  child: const Text("儲存"),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
   void _toggleFav(String path) {
     if (path.isEmpty) {
       return;
@@ -617,9 +524,56 @@ class _MainScreenState extends State<MainScreen>
     );
   }
 
+  void _invokeSavePlaylistDialog(List<String> paths) {
+    if (paths.isEmpty) {
+      myToast("請先選擇歌曲");
+      return;
+    }
+
+    showSaveSongsToPlaylistDialog(
+      context: context,
+      paths: paths,
+      playlists: _playlists,
+      onSave: (playlistName, songPaths) {
+        int addedCount = 0;
+        int duplicateCount = 0;
+        setState(() {
+          // 如果清單不存在，先初始化
+          if (!_playlists.containsKey(playlistName)) {
+            _playlists[playlistName] = [];
+          }
+
+          for (var path in songPaths) {
+            if (!_playlists[playlistName]!.contains(path)) {
+              _playlists[playlistName]!.add(path);
+              addedCount++;
+            } else {
+              duplicateCount++;
+            }
+          }
+        });
+        _saveData();
+        if (duplicateCount > 0 && addedCount > 0) {
+          myToast(
+            "成功加入 $addedCount 首到「$playlistName」\n已跳過 $duplicateCount 首重複歌曲",
+          );
+        } else if (duplicateCount > 0 && addedCount == 0) {
+          myToast("「$playlistName」已存在這些歌曲");
+        } else {
+          myToast("已加入「$playlistName」");
+        }
+
+        _pageController.animateToPage(
+          3,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     bool isBrowser = (_selectedIndex == 1);
     bool isPlaylistPage = (_selectedIndex == 3);
 
@@ -684,13 +638,13 @@ class _MainScreenState extends State<MainScreen>
           Expanded(
             child: PageView(
               controller: _pageController,
-              // 3. 當手指滑動頁面完成後，同步更新底部的索引狀態
               onPageChanged: (index) {
                 setState(() {
                   _selectedIndex = index;
                 });
               },
               children: [
+                // 佇列頁面
                 QueuePage(
                   queue: _playQueue,
                   currentPath: _currentPath,
@@ -698,7 +652,6 @@ class _MainScreenState extends State<MainScreen>
                   format: _formatDuration,
                   onPlay: (path) {
                     setState(() {
-                      // 關鍵！設定播放來源為「佇列」
                       _activeSource = PlaySource.queue;
                     });
                     _handlePlay(path);
@@ -707,7 +660,7 @@ class _MainScreenState extends State<MainScreen>
                   onReorder: _handleReorder, // 傳入排序
                   onDelete: _handleDeleteFromQueue, // 傳入刪除
                   onSaveAsPlaylist: () {
-                    // 傳入目前過濾後（或全部）的佇列歌曲路徑
+                    //佇列頁面的另存清單鈕
                     final filteredPaths = _playQueue
                         .where(
                           (s) => s.fileName.toLowerCase().contains(
@@ -716,9 +669,10 @@ class _MainScreenState extends State<MainScreen>
                         )
                         .map((s) => s.path)
                         .toList();
-                    _showSaveSongsToPlaylistDialog(filteredPaths);
+                    _invokeSavePlaylistDialog(filteredPaths);
                   }, // 傳入另存
                 ),
+                // 瀏覽頁面
                 FileBrowserPage(
                   allSongs: _allSongs, // 傳入主畫面的清單
                   currentQueue: _playQueue,
@@ -751,6 +705,7 @@ class _MainScreenState extends State<MainScreen>
                     });
                   },
                 ),
+                // 收藏頁面
                 FavoritePage(
                   favorites: _favorites,
                   currentPath: _currentPath,
@@ -758,13 +713,13 @@ class _MainScreenState extends State<MainScreen>
                   format: _formatDuration,
                   onPlay: (path) {
                     setState(() {
-                      // 關鍵！設定播放來源為「收藏」
                       _activeSource = PlaySource.favorites;
                     });
                     _handlePlay(path);
                   },
                   onToggle: _toggleFav,
                 ),
+                // 清單頁面
                 PlaylistPage(
                   playlists: _playlists,
                   query: _searchController.text,
@@ -783,82 +738,30 @@ class _MainScreenState extends State<MainScreen>
           const Divider(height: 1),
           if (!isPlaylistPage) ...{
             _isMultiSelectMode
-                ? Container(
-                    // 多選操作區
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    color: colorScheme.primaryContainer,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 第一列：顯示資訊
-                        Row(
-                          children: [
-                            const Icon(Icons.check_circle),
-                            const SizedBox(width: 8),
-                            Text(
-                              "已選 $_selectedCount 首",
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              "($_selectedTotalTime)",
-                              style: TextStyle(
-                                color: colorScheme.primary,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        // 第二列：操作按鈕
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            // 1. 加入佇列
-                            ElevatedButton.icon(
-                              onPressed: () {
-                                _fileBrowserKey.currentState?.performAdd();
-                                _pageController.jumpToPage(0);
-                              },
-                              icon: const Icon(Icons.queue_music),
-                              label: const Text("加入佇列"),
-                            ),
-                            // 2. 另存播放清單
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.playlist_add),
-                              label: const Text("另存清單"),
-                              onPressed: () {
-                                final paths =
-                                    _fileBrowserKey
-                                        .currentState
-                                        ?.selectedPaths ??
-                                    [];
-                                if (paths.isNotEmpty) {
-                                  _showSaveSongsToPlaylistDialog(paths);
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text("請先選擇歌曲")),
-                                  );
-                                }
-                              },
-                            ),
-                            // 3. 取消按鈕
-                            TextButton.icon(
-                              icon: const Icon(Icons.close),
-                              label: const Text("取消"),
-                              onPressed: () {
-                                _fileBrowserKey.currentState?.cancelSelection();
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                ? MultiSelectActionBar(
+                    selectedCount: _selectedCount,
+                    selectedTotalTime: _selectedTotalTime,
+                    onAdd: () {
+                      // 執行 FileBrowser 的加入佇列邏輯
+                      _fileBrowserKey.currentState?.performAdd();
+                      // 切換回佇列分頁 (Page 0)
+                      _pageController.jumpToPage(0);
+                    },
+                    onSaveAsPlaylist: () {
+                      final paths =
+                          _fileBrowserKey.currentState?.selectedPaths ?? [];
+                      if (paths.isNotEmpty) {
+                        _invokeSavePlaylistDialog(paths);
+                        // _fileBrowserKey.currentState?.cancelSelection();
+                      } else {
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(const SnackBar(content: Text("請先選擇歌曲")));
+                      }
+                    },
+                    onCancel: () {
+                      _fileBrowserKey.currentState?.cancelSelection();
+                    },
                   )
                 :
                   // mini_player，迷你播放器

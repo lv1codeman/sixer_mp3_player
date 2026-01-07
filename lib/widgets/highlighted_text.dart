@@ -1,3 +1,4 @@
+// lib/widgets/highlisted_text.dart
 import 'package:flutter/material.dart';
 
 // --- 搜尋高亮顯示組件 ---

@@ -1,5 +1,9 @@
 下載先執行 flutter pub get
 
+打包指令 flutter build apk --split-per-abi
+產出的安裝檔
+sixer_mp3_player\build\app\outputs\flutter-apkapp-arm64-v8a-release.apk
+
 # 待完成的功能
 
 1. [done]自訂 toast 後套用到佇列頁面的刪除提醒

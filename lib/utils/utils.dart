@@ -11,7 +11,7 @@ void myToast(String message, {double durationSeconds = 2.0}) {
   late OverlayEntry overlayEntry;
   overlayEntry = OverlayEntry(
     builder: (context) => Positioned(
-      top: MediaQuery.of(context).size.height * 0.5,
+      top: MediaQuery.of(context).size.height * 0.8,
       width: MediaQuery.of(context).size.width,
       child: Material(
         color: Colors.transparent,

@@ -1,3 +1,4 @@
+// lib/widgets/mini_player.dart
 import 'package:flutter/material.dart';
 
 class SubHeader extends StatelessWidget {
