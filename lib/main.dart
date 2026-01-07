@@ -1,3 +1,4 @@
+// lib/main.dart
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
@@ -11,14 +12,13 @@ import 'package:audio_service/audio_service.dart';
 // 程式碼分區管理
 import 'models/song.dart';
 import 'utils/utils.dart';
-// import 'widgets/sub_header.dart';
-// import 'widgets/highlighted_text.dart';
 
 import 'pages/queue_page.dart';
 import 'pages/file_browser_page.dart';
 import 'pages/favorite_page.dart';
 import 'pages/playlist_page.dart';
 import 'services/audio_handler.dart';
+import 'widgets/mini_player.dart';
 
 // 建立全域的 AudioHandler 實例
 late MyAudioHandler _audioHandler;
@@ -129,6 +129,26 @@ class _MainScreenState extends State<MainScreen>
         return _allSongs;
       case PlaySource.queue:
         return _playQueue;
+    }
+  }
+
+  void _updateAudioHandlerLoopMode() {
+    switch (_playMode) {
+      case 0:
+        _audioHandler.setLoopMode(LoopMode.off);
+        myToast("播放模式：全部循環", durationSeconds: 1.5);
+        break;
+      case 1:
+        _audioHandler.setLoopMode(LoopMode.one);
+        myToast("播放模式：單曲循環", durationSeconds: 1.5);
+        break;
+      case 2:
+        _audioHandler.setLoopMode(LoopMode.off);
+        myToast("播放模式：隨機循環", durationSeconds: 1.5);
+        break;
+      default:
+        _audioHandler.setLoopMode(LoopMode.off);
+        myToast("播放模式：全部循環", durationSeconds: 1.5);
     }
   }
 
@@ -840,198 +860,39 @@ class _MainScreenState extends State<MainScreen>
                       ],
                     ),
                   )
-                : Container(
-                    // 單點：播放音樂
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    color: colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.3,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(top: 5.0),
-                          // 當前播放曲目文字
-                          child: Text(
-                            _currentTitle,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 22,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        // 播放進度條
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                          child: StreamBuilder<Duration>(
-                            // [關鍵修正] 改為監聽 positionStream，這是 just_audio 內建會持續跳動的流
-                            stream: _audioHandler.positionStream,
-                            builder: (context, snapshot) {
-                              // 取得當前播放器的實際位置
-                              final position = snapshot.data ?? _position;
-
-                              // 只有在沒拖動時才更新全域 _position
-                              if (!_isDragging) {
-                                _position = position;
-                              }
-
-                              return Row(
-                                children: [
-                                  // 左側時間
-                                  SizedBox(
-                                    width: 42,
-                                    child: Text(
-                                      _formatDuration(_position),
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                  ),
-
-                                  // 中間 Slider
-                                  Expanded(
-                                    child: Slider(
-                                      activeColor: colorScheme.primary,
-                                      value: _position.inSeconds
-                                          .toDouble()
-                                          .clamp(
-                                            0.0,
-                                            _duration.inSeconds.toDouble() > 0
-                                                ? _duration.inSeconds.toDouble()
-                                                : 0.0,
-                                          ),
-                                      min: 0.0,
-                                      max: _duration.inSeconds.toDouble() > 0
-                                          ? _duration.inSeconds.toDouble()
-                                          : 0.0,
-                                      onChangeStart: (value) =>
-                                          _isDragging = true,
-                                      onChanged: (value) {
-                                        setState(() {
-                                          _position = Duration(
-                                            seconds: value.toInt(),
-                                          );
-                                        });
-                                      },
-                                      onChangeEnd: (value) async {
-                                        await _audioHandler.seek(
-                                          Duration(seconds: value.toInt()),
-                                        );
-                                        await Future.delayed(
-                                          const Duration(milliseconds: 200),
-                                        );
-                                        _isDragging = false;
-                                      },
-                                    ),
-                                  ),
-
-                                  // 右側總時長
-                                  SizedBox(
-                                    width: 42,
-                                    child: Text(
-                                      _formatDuration(_duration),
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            // 收藏按鈕
-                            IconButton(
-                              icon: Icon(
-                                _favorites.contains(_currentPath)
-                                    ? Icons.favorite
-                                    : Icons.favorite_border,
-                                color: Colors.red,
-                              ),
-                              iconSize: 28,
-                              onPressed: () {
-                                _toggleFav(_currentPath);
-                              },
-                            ),
-                            // 上一首按鈕
-                            IconButton(
-                              icon: const Icon(Icons.skip_previous),
-                              onPressed: _handlePrevious,
-                              iconSize: 40,
-                            ),
-                            // 播放/暫停 按鈕
-                            IconButton(
-                              icon: Icon(
-                                _isPlaying
-                                    ? Icons.pause_circle
-                                    : Icons.play_circle,
-                              ),
-                              iconSize: 64,
-                              color: colorScheme.primary,
-                              onPressed: () {
-                                if (_isPlaying) {
-                                  _audioHandler.pause();
-                                } else {
-                                  _audioHandler.play();
-                                }
-                              },
-                            ),
-                            // 下一首按鈕
-                            IconButton(
-                              icon: const Icon(Icons.skip_next),
-                              onPressed: _handleNext,
-                              iconSize: 40,
-                            ),
-                            // 播放模式按鈕
-                            IconButton(
-                              icon: Icon(
-                                _playMode == 0
-                                    ? Icons.repeat
-                                    : (_playMode == 1
-                                          ? Icons.repeat_one
-                                          : Icons.shuffle),
-                              ),
-                              iconSize: 28,
-                              onPressed: () {
-                                setState(() {
-                                  _playMode = (_playMode + 1) % 3;
-                                  switch (_playMode) {
-                                    case 0:
-                                      _audioHandler.setLoopMode(LoopMode.off);
-                                      myToast(
-                                        "播放模式：全部循環",
-                                        durationSeconds: 1.5,
-                                      );
-                                      break;
-                                    case 1:
-                                      _audioHandler.setLoopMode(LoopMode.one);
-                                      myToast(
-                                        "播放模式：單曲循環",
-                                        durationSeconds: 1.5,
-                                      );
-                                      break;
-                                    case 2:
-                                      _audioHandler.setLoopMode(LoopMode.off);
-                                      myToast(
-                                        "播放模式：隨機循環",
-                                        durationSeconds: 1.5,
-                                      );
-                                      break;
-                                    default:
-                                      _audioHandler.setLoopMode(LoopMode.off);
-                                      myToast(
-                                        "播放模式：全部循環",
-                                        durationSeconds: 1.5,
-                                      );
-                                  }
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                :
+                  // mini_player，迷你播放器
+                  MiniPlayer(
+                    currentTitle: _currentTitle,
+                    currentPath: _currentPath,
+                    isPlaying: _isPlaying,
+                    playMode: _playMode,
+                    position: _position,
+                    duration: _duration,
+                    favorites: _favorites,
+                    audioHandler: _audioHandler,
+                    // 關鍵：這裡把你的 handler 強轉型或直接取用 positionStream
+                    positionStream: (_audioHandler as dynamic).positionStream,
+                    formatDuration: _formatDuration,
+                    onToggleFav: _toggleFav,
+                    onPrevious: _handlePrevious,
+                    onNext: _handleNext,
+                    onTogglePlay: () {
+                      if (_isPlaying) {
+                        _audioHandler.pause();
+                      } else {
+                        _audioHandler.play();
+                      }
+                    },
+                    onTogglePlayMode: () {
+                      setState(() {
+                        _playMode = (_playMode + 1) % 3;
+                        _updateAudioHandlerLoopMode();
+                      });
+                    },
+                    onDraggingChanged: (isDragging) {
+                      _isDragging = isDragging;
+                    },
                   ),
           },
           if (!isPlaylistPage) const Divider(height: 1),
@@ -1075,350 +936,3 @@ class _MainScreenState extends State<MainScreen>
     );
   }
 }
-
-/// 已搬移的功能
-/** 
-// --- 1. 佇列頁面 ---
-// class QueuePage extends StatelessWidget {
-//   final List<Song> queue;
-//   final String currentPath;
-//   final String query;
-//   final String Function(Duration) format;
-//   final Function(String) onPlay;
-//   final VoidCallback onClear;
-//   final Function(int, int) onReorder;
-//   final Function(int) onDelete;
-//   final VoidCallback onSaveAsPlaylist;
-
-//   const QueuePage({
-//     super.key,
-//     required this.queue,
-//     required this.currentPath,
-//     required this.query,
-//     required this.format,
-//     required this.onPlay,
-//     required this.onClear,
-//     required this.onReorder,
-//     required this.onDelete,
-//     required this.onSaveAsPlaylist,
-//   });
-
-//   @override
-//   Widget build(BuildContext context) {
-//     final filtered = queue.where((s) {
-//       return s.fileName.toLowerCase().contains(query.toLowerCase());
-//     }).toList();
-
-//     final totalDuration = filtered.fold(
-//       Duration.zero,
-//       (p, s) => p + s.duration,
-//     );
-
-//     return Column(
-//       children: [
-//         SubHeader(
-//           text: "佇列：${filtered.length} 首 (${format(totalDuration)})",
-//           trailing: filtered.isNotEmpty
-//               ? Row(
-//                   mainAxisSize: MainAxisSize.min,
-//                   children: [
-//                     // 新增：加入清單鈕 (在左邊)
-//                     TextButton.icon(
-//                       onPressed: onSaveAsPlaylist,
-//                       icon: const Icon(Icons.playlist_add, size: 18),
-//                       label: const Text("加入清單", style: TextStyle(fontSize: 12)),
-//                       style: TextButton.styleFrom(
-//                         visualDensity: VisualDensity.compact,
-//                       ),
-//                     ),
-//                     // 原本的清空鈕 (在右邊)
-//                     TextButton.icon(
-//                       onPressed: onClear,
-//                       icon: const Icon(
-//                         Icons.delete_sweep,
-//                         size: 18,
-//                         color: Colors.redAccent,
-//                       ),
-//                       label: const Text(
-//                         "清空",
-//                         style: TextStyle(fontSize: 12, color: Colors.redAccent),
-//                       ),
-//                       style: TextButton.styleFrom(
-//                         visualDensity: VisualDensity.compact,
-//                       ),
-//                     ),
-//                   ],
-//                 )
-//               : null,
-//         ),
-
-//         // --- 1. 佇列頁面 (QueuePage) ---
-//         // ... 前方代碼不變 ...
-//         Expanded(
-//           child: ReorderableListView.builder(
-//             onReorder: (oldIdx, newIdx) {
-//               final int realOldIdx = queue.indexOf(filtered[oldIdx]);
-//               int realNewIdx = queue.indexOf(
-//                 filtered[newIdx > oldIdx ? newIdx - 1 : newIdx],
-//               );
-//               if (newIdx > oldIdx) {
-//                 realNewIdx++;
-//               }
-//               onReorder(realOldIdx, realNewIdx);
-//             },
-//             buildDefaultDragHandles: false,
-//             itemCount: filtered.length,
-//             // 在 main.dart 約第 1020 行處修改
-//             itemBuilder: (ctx, idx) {
-//               final s = filtered[idx];
-//               final itemKey = ValueKey("${s.path}_$idx");
-//               final bool isPlaying = (s.path == currentPath);
-//               // 1. 將 Listener 放在最外層，確保整個 ListTile 都能觸發計時器
-//               return ReorderableDelayedDragStartListener(
-//                 key: itemKey,
-//                 index: idx,
-//                 child: Listener(
-//                   //放棄震動
-//                   child: ListTile(
-//                     tileColor: isPlaying
-//                         ? Theme.of(
-//                             context,
-//                           ).colorScheme.primaryContainer.withValues(alpha: 0.5)
-//                         : null,
-//                     // 這裡不再需要包裹 Listener，避免手勢攔截
-//                     leading: Transform.translate(
-//                       offset: Offset(isPlaying ? -6.5 : 0, 0),
-//                       child: Padding(
-//                         padding: const EdgeInsets.all(8.0),
-//                         child: isPlaying
-//                             ? const Icon(
-//                                 Icons.play_arrow_rounded,
-//                                 color: Colors.orange,
-//                                 size: 36,
-//                               )
-//                             : const Icon(Icons.menu),
-//                       ),
-//                     ),
-//                     title: HighlightedText(
-//                       text: s.fileName,
-//                       query: query,
-//                       style: TextStyle(
-//                         fontWeight: isPlaying
-//                             ? FontWeight.bold
-//                             : FontWeight.normal,
-//                         color: isPlaying
-//                             ? Theme.of(context).colorScheme.primary
-//                             : null,
-//                       ),
-//                     ),
-//                     subtitle: Text(
-//                       format(s.duration),
-//                       style: const TextStyle(fontSize: 10),
-//                     ),
-//                     trailing: IconButton(
-//                       icon: const Icon(Icons.close),
-//                       onPressed: () {
-//                         myConfirmDialog(
-//                           title: "確認刪除",
-//                           content: "確定要從佇列中移除「${s.fileName}」嗎？",
-//                           onConfirm: () {
-//                             onDelete(queue.indexOf(s));
-//                             myToast("已從佇列移除", durationSeconds: 1.0);
-//                           },
-//                         );
-//                       },
-//                     ),
-//                     onTap: () => onPlay(s.path),
-//                   ),
-//                 ),
-//               );
-//             },
-//           ),
-//         ),
-//       ],
-//     );
-//   }
-// }
-
-// --- 2. 瀏覽頁面 ---
-// class FileBrowserPage extends StatefulWidget {
-//   final List<Song> allSongs; // 新增
-//   final List<Song> currentQueue;
-//   final bool isScanning; // 新增
-//   final VoidCallback onScan; // 新增
-//   final String query;
-//   final String Function(Duration) format;
-//   final Set<String> favorites;
-//   final Function(String) onPlay;
-//   final Function(String) onToggleFav;
-//   final Function(List<Song>) onBatchAdd;
-//   final Function(bool, int, String) onSelectionChanged;
-
-//   const FileBrowserPage({
-//     super.key,
-//     required this.allSongs,
-//     required this.currentQueue,
-//     required this.isScanning,
-//     required this.onScan,
-//     required this.query,
-//     required this.format,
-//     required this.favorites,
-//     required this.onPlay,
-//     required this.onToggleFav,
-//     required this.onBatchAdd,
-//     required this.onSelectionChanged,
-//   });
-
-//   @override
-//   State<FileBrowserPage> createState() => _FileBrowserPageState();
-// }
-
-// class _FileBrowserPageState extends State<FileBrowserPage>
-//     with AutomaticKeepAliveClientMixin {
-//   final Set<String> _selected = {};
-//   List<String> get selectedPaths => _selected.toList();
-//   bool _isMulti = false;
-
-//   @override
-//   bool get wantKeepAlive => true;
-
-//   void _cancelSelection() {
-//     setState(() {
-//       _isMulti = false;
-//       _selected.clear();
-//     });
-//     widget.onSelectionChanged(false, 0, "00:00");
-//   }
-
-//   void _performAdd() {
-//     // 1. 找出被選中且「不在」目前佇列中的歌曲
-//     final toAdd = widget.allSongs.where((s) {
-//       bool isSelected = _selected.contains(s.path);
-//       // 檢查路徑是否已經存在於佇列中
-//       bool alreadyInQueue = widget.currentQueue.any(
-//         (item) => item.path == s.path,
-//       );
-//       return isSelected && !alreadyInQueue;
-//     }).toList();
-
-//     // 2. 根據過濾結果執行動作
-//     if (toAdd.isNotEmpty) {
-//       widget.onBatchAdd(toAdd);
-//       myToast("已加入 ${toAdd.length} 首新歌曲");
-//     } else {
-//       if (_selected.isNotEmpty) {
-//         myToast("選中的歌曲已全部在佇列中");
-//       }
-//     }
-
-//     _cancelSelection();
-//   }
-
-//   @override
-//   Widget build(BuildContext context) {
-//     super.build(context);
-//     final filtered = widget.allSongs.where((s) {
-//       return s.fileName.toLowerCase().contains(widget.query.toLowerCase());
-//     }).toList();
-//     final totalDuration = filtered.fold(Duration.zero, (p, s) {
-//       return p + s.duration;
-//     });
-
-//     return Column(
-//       children: [
-//         SubHeader(
-//           text: "本地音樂：${filtered.length} 首 (${widget.format(totalDuration)})",
-//           // 如果未來想在這裡加按鈕（例如全選），可以放在 trailing 參數
-//         ),
-//         // 如果正在掃描，顯示進度條
-//         if (widget.isScanning) const LinearProgressIndicator(),
-//         Expanded(
-//           child: widget.allSongs.isEmpty && !widget.isScanning
-//               ? const Center(
-//                   child: Text(
-//                     "找不到音樂檔案(.mp3)",
-//                     style: TextStyle(color: Colors.grey),
-//                   ),
-//                 )
-//               : ListView.builder(
-//                   itemCount: filtered.length,
-//                   itemBuilder: (ctx, idx) {
-//                     final s = filtered[idx];
-//                     bool isChecked = _selected.contains(s.path);
-//                     bool isFav = widget.favorites.contains(s.path);
-
-//                     return ListTile(
-//                       leading: _isMulti
-//                           ? Checkbox(
-//                               value: isChecked,
-//                               onChanged: (v) {
-//                                 setState(() {
-//                                   if (v!) {
-//                                     _selected.add(s.path);
-//                                   } else {
-//                                     _selected.remove(s.path);
-//                                   }
-//                                 });
-//                                 _notify();
-//                               },
-//                             )
-//                           : const Icon(Icons.music_note),
-//                       title: HighlightedText(
-//                         text: s.fileName,
-//                         query: widget.query,
-//                       ),
-//                       subtitle: Text(
-//                         widget.format(s.duration),
-//                         style: const TextStyle(fontSize: 10),
-//                       ),
-//                       trailing: _isMulti
-//                           ? null
-//                           : IconButton(
-//                               icon: Icon(
-//                                 isFav ? Icons.favorite : Icons.favorite_border,
-//                                 color: Colors.red,
-//                               ),
-//                               onPressed: () {
-//                                 widget.onToggleFav(s.path);
-//                               },
-//                             ),
-//                       onLongPress: () {
-//                         setState(() {
-//                           _isMulti = true;
-//                           _selected.add(s.path);
-//                         });
-//                         _notify();
-//                       },
-//                       onTap: () {
-//                         if (_isMulti) {
-//                           setState(() {
-//                             if (isChecked) {
-//                               _selected.remove(s.path);
-//                             } else {
-//                               _selected.add(s.path);
-//                             }
-//                           });
-//                           _notify();
-//                         } else {
-//                           widget.onPlay(s.path);
-//                         }
-//                       },
-//                     );
-//                   },
-//                 ),
-//         ),
-//       ],
-//     );
-//   }
-
-//   void _notify() {
-//     final selectedSongs = widget.allSongs.where((s) {
-//       return _selected.contains(s.path);
-//     });
-//     final total = selectedSongs.fold(Duration.zero, (p, s) {
-//       return p + s.duration;
-//     });
-//     widget.onSelectionChanged(_isMulti, _selected.length, widget.format(total));
-//   }
-// }
-*/

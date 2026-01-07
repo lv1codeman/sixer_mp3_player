@@ -1,3 +1,4 @@
+// lib/pages/playlist_page.dart
 import 'package:flutter/material.dart';
 import '../widgets/sub_header.dart';
 import '../widgets/highlighted_text.dart';
